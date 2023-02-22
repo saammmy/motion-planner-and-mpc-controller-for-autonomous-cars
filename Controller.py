@@ -84,20 +84,20 @@ class inputs:
 
 class MPC:
     def __init__(self, vehicle, dt = 0.2, prediction_horizon = 10, control_horizon = 1):
-        self.w_cte = 100.0
-        self.w_eyaw = 100.0
-        self.w_dthr = 1.0
-        self.w_dstr = 1.0
-        self.w_thr = 1.0
-        self.w_str = 1.0
-        self.w_vel = 50.0
+        self.w_cte = 0.01
+        self.w_eyaw = 50.0
+        self.w_dthr = 0.0
+        self.w_dstr = 0.0
+        self.w_thr = 0.0
+        self.w_str = 0.0
+        self.w_vel = 1.0
 
         self.dt = dt
         self.prediction_horizon = prediction_horizon
         self.control_horizon = control_horizon
 
         # Control Input Bounds
-        self.thr_bounds = (0.0, 1.0)
+        self.thr_bounds = (-1.0, 1.0)
         self.str_bounds = (-1.22, 1.22)
         self.bounds = (self.thr_bounds, self.str_bounds)*self.prediction_horizon
 
@@ -162,9 +162,24 @@ class MPC:
             control_input.str_angle = control_inputs[itr+1]
 
             next_state = self.model(control_input, curr_state)
-            cost += self.w_cte*(next_state.cte)**2 + self.w_eyaw*(next_state.eyaw)**2 + self.w_vel * (next_state.v - self.waypoints_wrt_vehicle[3,int(itr/2)+1])**2 + \
-                    self.w_thr*(control_input.throttle)**2 + self.w_dthr*(control_input.throttle - control_inputs[itr-2])**2 + \
-                    self.w_str*(control_input.str_angle)**2 + self.w_dstr*(control_input.str_angle - control_inputs[itr-1])**2
+
+            cost_cte = self.w_cte*(next_state.cte)**2
+            cost_eyaw = self.w_eyaw*(next_state.eyaw)**2
+            cost_vel = self.w_vel * (next_state.v - self.waypoints_wrt_vehicle[3,int(itr/2)+1])**2
+            cost_thr = self.w_thr*(control_input.throttle)**2
+            cost_str = self.w_str*(control_input.str_angle)**2
+            cost_dthr = self.w_dthr*(control_input.throttle - control_inputs[itr-2])**2
+            cost_dstr = self.w_dstr*(control_input.str_angle - control_inputs[itr-1])**2
+            # print("Cost cte: ",cost_cte)
+            # print("Cost cost_eyaw: ",cost_eyaw)
+            # print("Cost cost_vel: ",cost_vel)
+            # print("Cost cost_thr: ",cost_thr)
+            # print("Cost cost_str: ",cost_str)
+            # print("Cost cost_dthr: ",cost_dthr)
+            # print("Cost cost_dstr: ",cost_dstr)
+            
+            cost += cost_cte + cost_eyaw + cost_vel + cost_thr + cost_str + cost_dthr + cost_dstr
+        # print(control_inputs)
         return cost
 
     def run_step(self):
@@ -189,17 +204,10 @@ class MPC:
             steering_angle = control_inputs[i*2 + 1]
             # print("Waypoints: ", self.waypoints)
             # print("Waypoints wrt vehicle ", self.waypoints_wrt_vehicle)
+            print("Control Inputs ", control_inputs)
             print("Throttle: ", throttle)
             print("Steering: ", steering_angle)
             print("Brake: ", brake)
 
             control = carla.VehicleControl(throttle, steering_angle, brake)
             self.vehicle.apply_control(control)
-
-
-
-        
-
-
-        
-            
