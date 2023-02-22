@@ -60,6 +60,47 @@ class QuinticPolynomial:
         j = 6*self.a3 + 24*self.a4*t + 60*self.a5*t**2
         return j
 
+
+class QuarticPolynomial:
+
+    def __init__(self, xi, vi, ai, vf, af, T):
+        # calculate coefficient of quartic polynomial
+        # used for longitudinal trajectory
+        self.a0 = xi
+        self.a1 = vi
+        self.a2 = 0.5*ai
+
+        A = np.array([[3*T**2, 4*T**3],
+                             [6*T, 12*T**2]])
+        b = np.array([vf - self.a1 - 2*self.a2*T,
+                             af - 2*self.a2])
+
+        x = np.linalg.solve(A, b)
+
+        self.a3 = x[0]
+        self.a4 = x[1]
+
+    # calculate postition info.
+    def calc_pos(self, t):
+        x = self.a0 + self.a1*t + self.a2*t**2 + self.a3*t**3 + self.a4*t**4
+        return x
+
+    # calculate velocity info.
+    def calc_vel(self, t):
+        v = self.a1 + 2*self.a2*t + 3*self.a3*t**2 + 4*self.a4*t**3
+        return v
+
+    # calculate acceleration info.
+    def calc_acc(self, t):
+        a = 2*self.a2 + 6*self.a3*t + 12*self.a4*t**2
+        return a
+
+    # calculate jerk info.
+    def calc_jerk(self, t):
+        j = 6*self.a3 + 24*self.a4*t
+        return j
+
+
 class LocalPlanner:
     def __init__(self,world,sp,s,x,y, yaw, curvature):
         self.world = world
@@ -189,7 +230,6 @@ class LocalPlanner:
         right = waypoint.get_right_lane()
         temp_d = 0
         while left is not None and left.get_left_lane().lane_id*left.lane_id >=0 and left.lane_type == carla.LaneType.Driving :
-            print("here")
             temp_d = goal_d - lane_width
             goal_sets.append((goal_s,temp_d))
             left = left.get_left_lane()
@@ -206,20 +246,18 @@ class LocalPlanner:
     def run_step(self,current_state,target_lon_vel):
 
         # Calculate current s and d
-        current_s,current_d = self.cartesian_to_frenet(round(current_state['x'],2), round(current_state['y'],2))
+        current_s,current_d = self.cartesian_to_frenet(current_state['x'], current_state['y'])
         self.planning_horizon = current_state["speed"]*self.planning_duration + (self.max_acceleration*self.planning_duration**2)/2.0
-        print(self.planning_horizon)
+        self.planning_horizon = 20
         goal_s = current_s + self.planning_horizon
         goal_d = 0
 
-        self.lat_traj_frenet = QuinticPolynomial(round(current_d,2),current_state["lat_vel"],
+        self.lon_traj_frenet = QuarticPolynomial(round(current_s,2),5,
+                                current_state["long_acc"],target_lon_vel,0,self.planning_duration)
+
+        self.lat_traj_frenet = QuinticPolynomial(-3.5,current_state["lat_vel"],
                                 current_state["lat_acc"],goal_d,0,0,self.planning_duration)
-        self.lon_traj_frenet = QuinticPolynomial(round(current_s,2),current_state["long_vel"],
-                                current_state["long_acc"],goal_s,target_lon_vel,0,self.planning_duration)
 
         x , y, yaw, v = self.calculate_global_path()
-        plt.plot(x,y)
-        plt.axis('equal')
-        plt.show()
 
         return x, y, yaw, v
