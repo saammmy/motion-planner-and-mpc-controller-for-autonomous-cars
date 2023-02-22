@@ -1,6 +1,23 @@
 import numpy as np
 import math
 from matplotlib import pyplot as plt
+import glob
+import sys
+import os
+try:
+    sys.path.append(glob.glob('../carla/dist/carla-*%d.%d-%s.egg' % (
+        sys.version_info.major,
+        sys.version_info.minor,
+        'win-amd64' if os.name == 'nt' else 'linux-x86_64'))[0])
+except IndexError:
+    pass
+try:
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + '/carla')
+except IndexError:
+    pass
+
+import carla
+
 class QuinticPolynomial:
 
     def __init__(self, xi, vi, ai, xf, vf, af, T):
@@ -44,10 +61,11 @@ class QuinticPolynomial:
         return j
 
 class LocalPlanner:
-    def __init__(self,sp,s,x,y, yaw, curvature):
-        self.planning_horizon = 5
-        self.planning_duration = 2
-        self.no_output_points = 11
+    def __init__(self,world,sp,s,x,y, yaw, curvature):
+        self.world = world
+        self.planning_horizon = 20 #meters
+        self.planning_duration = 2 #seconds
+        self.dt = 0.2
         self.refrence_path = sp
         self.s = s
         self.x = x
@@ -57,6 +75,8 @@ class LocalPlanner:
         self.lon_traj_frenet = None
         self.lon_traj_frenet = None
         self.traj_cartesian = None
+        self.max_acceleration = 2 #m/s2
+        self.target_velocity = None
     
     def update_refrence(self,sp,s,x,y, yaw, curvature):
         self.refrence_path = sp
@@ -71,6 +91,7 @@ class LocalPlanner:
 
     def cross2(self,a:np.ndarray,b:np.ndarray)->np.ndarray:
         return np.cross(a,b)
+        
     def cartesian_to_frenet(self, x, y):
 
         dx = [x - ix for ix in self.x]
@@ -92,6 +113,7 @@ class LocalPlanner:
             idx = closest_index
         if idx == 0:
             idx = 1
+
         n_x = self.x[idx] - self.x[idx - 1]
         n_y = self.y[idx] - self.y[idx - 1]
         x_x = x - self.x[idx]
@@ -112,16 +134,24 @@ class LocalPlanner:
             d = -d
         
         s = self.s[idx-1] + self.get_dist(0,0,proj_x,proj_y)
-
         return s,d
 
+    def frenet_to_cartesian(self, s, d):
+
+        xy = self.refrence_path.calc_position(s)
+        ref_yaw = self.refrence_path.calc_yaw(s)
+
+        fx = xy[0] + d*math.cos(ref_yaw + math.pi/2.0)
+        fy = xy[1] + d*math.sin(ref_yaw + math.pi/2.0)
+
+        return fx, fy
 
     def calculate_global_path(self):
         
-        s = [self.lon_traj_frenet.calc_pos(t) for t in np.arange(0,self.planning_duration, self.planning_duration/self.no_output_points)]
-        d = [self.lat_traj_frenet.calc_pos(t) for t in np.arange(0,self.planning_duration, self.planning_duration/self.no_output_points)]
-        s_d = [self.lon_traj_frenet.calc_vel(t) for t in np.arange(0,self.planning_duration, self.planning_duration/self.no_output_points)]
-        d_d = [self.lat_traj_frenet.calc_vel(t) for t in np.arange(0,self.planning_duration, self.planning_duration/self.no_output_points)]
+        s = [self.lon_traj_frenet.calc_pos(t) for t in np.arange(0,self.planning_duration + self.dt, self.dt)]
+        d = [self.lat_traj_frenet.calc_pos(t) for t in np.arange(0,self.planning_duration + self.dt, self.dt)]
+        s_d = [self.lon_traj_frenet.calc_vel(t) for t in np.arange(0,self.planning_duration + self.dt, self.dt)]
+        d_d = [self.lat_traj_frenet.calc_vel(t) for t in np.arange(0,self.planning_duration + self.dt, self.dt)]
 
 
         xy = [self.refrence_path.calc_position(s_i) for s_i in s]
@@ -149,18 +179,47 @@ class LocalPlanner:
         return x , y, yaw, v
 
 
+    def generate_goal_sets(self,waypoint,goal_s,goal_d):
+
+        goal_sets = []
+        lane_width = waypoint.lane_width
+
+        goal_sets.append((goal_s,goal_d))
+        left = waypoint.get_left_lane()
+        right = waypoint.get_right_lane()
+        temp_d = 0
+        while left is not None and left.get_left_lane().lane_id*left.lane_id >=0 and left.lane_type == carla.LaneType.Driving :
+            print("here")
+            temp_d = goal_d - lane_width
+            goal_sets.append((goal_s,temp_d))
+            left = left.get_left_lane()
+        
+        temp_d = 0
+        while right is not None and right.get_right_lane().lane_id*right.lane_id >=0 and right.lane_type == carla.LaneType.Driving:
+            temp_d = goal_d + lane_width
+            goal_sets.append((goal_s,temp_d))
+            right = right.get_right_lane()
+
+        return goal_sets
+
+
     def run_step(self,current_state,target_lon_vel):
 
         # Calculate current s and d
         current_s,current_d = self.cartesian_to_frenet(round(current_state['x'],2), round(current_state['y'],2))
+        self.planning_horizon = current_state["speed"]*self.planning_duration + (self.max_acceleration*self.planning_duration**2)/2.0
+        print(self.planning_horizon)
         goal_s = current_s + self.planning_horizon
         goal_d = 0
-        # run frenet plan for longitudnal trajectory
+
         self.lat_traj_frenet = QuinticPolynomial(round(current_d,2),current_state["lat_vel"],
-                                    current_state["lat_acc"],goal_d,0,0,self.planning_duration)
+                                current_state["lat_acc"],goal_d,0,0,self.planning_duration)
         self.lon_traj_frenet = QuinticPolynomial(round(current_s,2),current_state["long_vel"],
-                                    current_state["long_acc"],goal_s,target_lon_vel,0,self.planning_duration)
+                                current_state["long_acc"],goal_s,target_lon_vel,0,self.planning_duration)
 
         x , y, yaw, v = self.calculate_global_path()
+        plt.plot(x,y)
+        plt.axis('equal')
+        plt.show()
 
         return x, y, yaw, v
