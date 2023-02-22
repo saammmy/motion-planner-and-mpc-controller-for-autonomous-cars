@@ -85,7 +85,8 @@ if __name__ == "__main__":
     spawn_points = world.get_map().get_spawn_points()
     start_point = carla.Transform(carla.Location(x=-10, y=115.80, z=0.5), carla.Rotation(yaw=90))
     obs = carla.Transform(carla.Location(x=-10, y=80.80, z=0.5), carla.Rotation(yaw=90))
-    end_point = random.choice(spawn_points)    
+    end_point = carla.Transform(carla.Location(x=-65, y=132, z=0.5))
+    #end_point = random.choice(spawn_points)    
 
 
     #Generate Global Path Waypoints
