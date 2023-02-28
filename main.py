@@ -70,7 +70,12 @@ def get_current_states(Ego):
     }
     return current_state
 
+def draw_trajectory(world, x,y, height=0.5):
 
+    for i in range(len(x)):
+            begin = carla.Location(x=x[i],y=y[i],z=height)
+            world.debug.draw_point(begin,size=0.2,life_time=10)
+            
 if __name__ == "__main__":
 
 

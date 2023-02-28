@@ -252,10 +252,10 @@ class LocalPlanner:
         goal_s = current_s + self.planning_horizon
         goal_d = 0
 
-        self.lon_traj_frenet = QuarticPolynomial(round(current_s,2),5,
+        self.lon_traj_frenet = QuarticPolynomial(round(current_s,2),current_state["long_vel"],
                                 current_state["long_acc"],target_lon_vel,0,self.planning_duration)
 
-        self.lat_traj_frenet = QuinticPolynomial(-3.5,current_state["lat_vel"],
+        self.lat_traj_frenet = QuinticPolynomial(round(current_d,2),current_state["lat_vel"],
                                 current_state["lat_acc"],goal_d,0,0,self.planning_duration)
 
         x , y, yaw, v = self.calculate_global_path()
