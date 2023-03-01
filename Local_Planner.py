@@ -105,7 +105,7 @@ class LocalPlanner:
     def __init__(self,world,sp,s,x,y, yaw, curvature):
         self.world = world
         self.planning_horizon = 20 #meters
-        self.planning_duration = 2 #seconds
+        self.planning_duration = 1.6 #seconds
         self.dt = 0.2
         self.refrence_path = sp
         self.s = s
@@ -252,7 +252,7 @@ class LocalPlanner:
         goal_s = current_s + self.planning_horizon
         goal_d = 0
 
-        self.lon_traj_frenet = QuarticPolynomial(round(current_s,2),current_state["long_vel"],
+        self.lon_traj_frenet = QuarticPolynomial(round(current_s,2),5,
                                 current_state["long_acc"],target_lon_vel,0,self.planning_duration)
 
         self.lat_traj_frenet = QuinticPolynomial(round(current_d,2),current_state["lat_vel"],

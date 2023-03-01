@@ -1,5 +1,6 @@
 import math
 import sys
+import time
 import glob
 import os
 import numpy as np
@@ -69,11 +70,14 @@ class PIDController:
         self.vehicle.apply_control(control)
 
 class state:
-    def __init__(self, X=0, Y=0, YAW=0, V=0, CTE=0, EYAW=0):
+    def __init__(self, X=0, Y=0, YAW=0, V=0, STR=0, BETA=0, CTE=0, EYAW=0):
         self.x = X
         self.y = Y
         self.yaw = YAW
+        self.beta = BETA
+        
         self.v = V
+
         self.cte = CTE
         self.eyaw = EYAW
 
@@ -84,14 +88,14 @@ class inputs:
         self.brake = brake
 
 class MPC:
-    def __init__(self, vehicle, dt = 0.2, prediction_horizon = 10, control_horizon = 1):
-        self.w_cte = 10.0
-        self.w_eyaw = 50.0
-        self.w_dthr = 1.0
-        self.w_dstr = 1.0
-        self.w_thr = 1.0
-        self.w_str = 1.0
-        self.w_vel = 1000.0
+    def __init__(self, vehicle, world, dt = 0.2, prediction_horizon = 8, control_horizon = 1):
+        self.w_cte = 0.5
+        self.w_eyaw = 10.0
+        self.w_dthr = 100.0
+        self.w_dstr = 10.0
+        self.w_thr = 5.0
+        self.w_str = 10.0
+        self.w_vel = 5.0
 
         self.dt = dt
         self.prediction_horizon = prediction_horizon
@@ -107,13 +111,23 @@ class MPC:
 
         self.vehicle_state = state()
         self.length = 2.89
+        self.lr = 1.445
+        self.lf = 1.445
         self.coff = []
         self.waypoints = []
         self.waypoints_wrt_vehicle = []
         
         # Store the vehicle and waypoint list
         self.vehicle = vehicle
+        self.world = world
+
+        self.mpc_plot = True
     
+    def normalize_angle(self, angle):
+        angle = np.asarray(angle)
+        
+        return np.where(angle<0, 2*np.pi+angle, angle)
+
     def convert_input_to_carla(self, str_angle, throttle, brake):
         str_angle = str_angle / self.str_bounds[1]
         throttle = throttle / self.thr_bounds[1]
@@ -124,27 +138,23 @@ class MPC:
     def update_vehicle_state(self, x=0, y=0, yaw=0, v=0, cte=0, eyaw=0):
         self.vehicle_state.x = x
         self.vehicle_state.y = y
-        self.vehicle_state.yaw = yaw
+        self.vehicle_state.yaw = self.normalize_angle(yaw)
         self.vehicle_state.v = v
         self.vehicle_state.cte = cte
         self.vehicle_state.eyaw = eyaw
     
-    def update_waypoints(self, x, y, yaw, v):
+    def update_waypoints(self, x, y, yaw, v, vehicle_state):
+        self.update_vehicle_state(vehicle_state["x"], vehicle_state["y"], vehicle_state["yaw"], vehicle_state["speed"])
+
         self.waypoints = np.zeros(shape=(4, np.shape(x)[0]-1))
-        # self.update_vehicle_state(x[0], y[0], yaw[0], v[0])
-        self.waypoints[0,:] = x[1:np.shape(x)[0]]
-        self.waypoints[1,:] = y[1:np.shape(x)[0]]
-        self.waypoints[2,:] = yaw[1:np.shape(x)[0]]
-        self.waypoints[3,:] = v[1:np.shape(x)[0]]        
+        self.waypoints[0,:] = x[1:]
+        self.waypoints[1,:] = y[1:]
+        self.waypoints[2,:] = self.normalize_angle(yaw[1:])
+        self.waypoints[3,:] = v[1:]        
     
     def global_to_vehicle(self, waypoints):
         n_waypoints = np.shape(waypoints)[1]
-        # self.waypoints_corr = np.zeros(shape=(4, np.shape(waypoints)[1]))
-        # self.waypoints_corr[0,:] = self.waypoints[0,:]
-        # self.waypoints_corr[1,:] = self.waypoints[1,:]
-        # self.waypoints_corr[2,:] = 0
-        # self.waypoints_corr[3,:] = 1
-        # waypoints_wrt_vehicle = self.tranformation_matrix @ self.waypoints_corr #np.array([ego_vel.x, ego_vel.y, ego_vel.z, 0.0])
+
         waypoints_wrt_vehicle = np.zeros(shape=(4, n_waypoints))
         waypoints_wrt_vehicle[0,:] = np.cos(-self.vehicle_state.yaw)*(waypoints[0,:]-self.vehicle_state.x) - np.sin(-self.vehicle_state.yaw)*(waypoints[1,:]-self.vehicle_state.y)
         waypoints_wrt_vehicle[1,:] = np.sin(-self.vehicle_state.yaw)*(waypoints[0,:]-self.vehicle_state.x) + np.cos(-self.vehicle_state.yaw)*(waypoints[1,:]-self.vehicle_state.y)
@@ -153,7 +163,7 @@ class MPC:
 
         return waypoints_wrt_vehicle
 
-    def model(self, control_input, curr_state, des_next_state):
+    def model_rear(self, control_input, curr_state, des_next_state):
 
         next_state = state()
         next_state.x = curr_state.x + curr_state.v*np.cos(curr_state.yaw)*self.dt
@@ -161,70 +171,101 @@ class MPC:
         next_state.yaw = curr_state.yaw + curr_state.v/self.length * np.tan(control_input.str_angle)*self.dt
         next_state.v = curr_state.v + control_input.throttle*self.dt
 
-        # yaw_desired = np.arctan(self.coff[2]+2*self.coff[1]*curr_state.x + 3*self.coff[0]*curr_state.x**2)
-        next_state.cte = (next_state.x - des_next_state.x)**2 + (next_state.y - des_next_state.y)**2 #np.polyval(self.coff,curr_state.x) - curr_state.y + (curr_state.v*np.sin(curr_state.eyaw)*self.dt)
-        next_state.eyaw = (next_state.yaw - des_next_state.yaw)**2 #curr_state.yaw - yaw_desired + (curr_state.v/self.length*control_input.str_angle*self.dt)
+        next_state.cte = (next_state.x - des_next_state.x)**2 + (next_state.y - des_next_state.y)**2
+        next_state.eyaw = (next_state.yaw - des_next_state.yaw)**2
 
         return next_state
 
-    def cost_function(self, control_inputs):
-        curr_state = self.vehicle_state
+    def model_cg(self, control_input, curr_state, des_next_state):
+
+        next_state = state()
+        next_state.x = curr_state.x + curr_state.v*np.cos(curr_state.yaw + curr_state.beta)*self.dt
+        next_state.y = curr_state.y + curr_state.v*np.sin(curr_state.yaw + curr_state.beta)*self.dt
+        next_state.beta = np.arctan((self.lr/self.length)*np.tan(control_input.str_angle))
+        next_state.yaw = curr_state.yaw + curr_state.v/self.lr * np.sin(next_state.beta)*self.dt
+        next_state.v = curr_state.v + control_input.throttle*self.dt
+        
+        next_state.cte = (next_state.x - des_next_state.x)**2 + (next_state.y - des_next_state.y)**2 
+        next_state.eyaw = (next_state.yaw - des_next_state.yaw)**2
+
+        return next_state
+
+    def get_next_state(self, curr_state, throttle, str_angle, des_next_state):
         control_input = inputs()
-        cost = 0
-        for itr in range(0,self.prediction_horizon):
-            control_input.throttle = control_inputs[itr]
-            control_input.str_angle = control_inputs[itr+self.prediction_horizon]
-            
-            des_next_state = state(self.waypoints_wrt_vehicle[0,itr],self.waypoints_wrt_vehicle[1,itr],self.waypoints_wrt_vehicle[2,itr])
+        control_input.throttle = throttle
+        control_input.str_angle = str_angle
+        
+        next_state = self.model_cg(control_input, curr_state, des_next_state)
+
+        return next_state
     
-            next_state = self.model(control_input, curr_state, des_next_state)
-            cost_cte = self.w_cte*(next_state.cte)
-            cost_eyaw = self.w_eyaw*(next_state.eyaw)
-            cost_vel = self.w_vel * (next_state.v - self.waypoints_wrt_vehicle[3,itr])**2 #int(itr/2)+1 self.waypoints_wrt_vehicle[3,itr+1]
-            cost_thr = self.w_thr*(control_input.throttle)**2
-            cost_str = self.w_str*(control_input.str_angle)**2
-            cost_dthr = self.w_dthr*(control_input.throttle - control_inputs[itr])**2
-            cost_dstr = self.w_dstr*(control_input.str_angle - control_inputs[itr+self.prediction_horizon])**2
-            # print("---------------------------")
-            # print(itr)
-            # print("Cost cte: ",cost_cte)
-            # print("Cost cost_eyaw: ",cost_eyaw)
-            # print("Cost cost_vel: ",cost_vel)
-            # print("Cost cost_thr: ",cost_thr)
-            # print("Cost cost_str: ",cost_str)
-            # print("Cost cost_dthr: ",cost_dthr)
-            # print("Cost cost_dstr: ",cost_dstr)
+    def get_costs(self, next_state, control_inputs, itr):
+        cost_cte = self.w_cte*(next_state.cte)
+        cost_eyaw = self.w_eyaw*(next_state.eyaw)
+        cost_vel = self.w_vel * (next_state.v - self.waypoints[3,-1])**2
+        cost_thr = self.w_thr*(control_inputs[itr])**2
+        cost_str = self.w_str*(control_inputs[itr+self.prediction_horizon])**2
+        if itr!=0:
+            cost_dthr = self.w_dthr*(control_inputs[itr] - control_inputs[itr-1])**2
+            cost_dstr = self.w_dstr*(control_inputs[itr+self.prediction_horizon] - control_inputs[itr+self.prediction_horizon-1])**2
+        else:
+            cost_dthr = cost_dstr = 0
             
-            cost += cost_cte + cost_eyaw + cost_vel + cost_thr + cost_str + cost_dthr + cost_dstr
-        # print(control_inputs)
+        cost = cost_cte + cost_eyaw + cost_vel + cost_thr + cost_str + cost_dthr + cost_dstr
+
+        # print("---------------------------")
+        # print("Cost cte: ",cost_cte)
+        # print("Cost cost_eyaw: ",cost_eyaw)
+        # print("Cost cost_vel: ",cost_vel)
+        # print("Cost cost_thr: ",cost_thr)
+        # print("Cost cost_str: ",cost_str)
+        # print("Cost cost_dthr: ",cost_dthr)
+        # print("Cost cost_dstr: ",cost_dstr)
+
         return cost
 
-    def run_step(self, current_state):
-        self.tranformation_matrix = current_state["transformation_matrix"]
-        self.update_vehicle_state(current_state["x"], current_state["y"], current_state["yaw"], current_state["speed"])
+    def cost_function(self, control_inputs):
+        curr_state = self.vehicle_state
+        cost = 0
 
+        for itr in range(self.prediction_horizon):
+            des_next_state = state(self.waypoints[0,itr],self.waypoints[1,itr],self.waypoints[2,itr])
+
+            next_state = self.get_next_state(curr_state, control_inputs[itr], control_inputs[itr+self.prediction_horizon], des_next_state)
+            
+            curr_state = next_state
+
+            cost += self.get_costs(next_state, control_inputs, itr)
+        # print(cost)
+        return cost
+    
+    def plot_traj_carla(self, control_inputs):
+        curr_state = self.vehicle_state
+        for itr in range(self.prediction_horizon):
+            des_next_state = state(self.waypoints[0,itr],self.waypoints[1,itr],self.waypoints_wrt_vehicle[2,itr])
+
+            next_state = self.get_next_state(curr_state, control_inputs[itr], control_inputs[itr+self.prediction_horizon], des_next_state)
+            
+            curr_point = carla.Location(x=curr_state.x,y=curr_state.y,z=0.1)
+            next_point = carla.Location(x=next_state.x,y=next_state.y,z=0.1)
+            
+            self.world.debug.draw_arrow(curr_point, next_point, thickness=0.1, arrow_size=0.1, color=carla.Color(255, 0, 0), life_time=0.3)
+            curr_state = next_state
+
+    def run_step(self):
         # Transfer the coordinates from global coordinates to vehicle coordinates
-        # self.waypoints_wrt_vehicle = self.global_to_vehicle(self.waypoints)
+        self.waypoints_wrt_vehicle = self.global_to_vehicle(self.waypoints)
         
-        self.waypoints_wrt_vehicle = self.waypoints
-        # print("-------")
-        # print(self.waypoints[0:2,:])
-        # print(self.waypoints_wrt_vehicle[0:2,:])
-        # print("-------")
-        # plt.plot(self.waypoints[0], self.waypoints[1])
-        # plt.figure()
-        # plt.plot(self.waypoints_wrt_vehicle[0], self.waypoints_wrt_vehicle[1])
-        # plt.show()
-        
-        # Fit a cubic polynomial to the waypoints
-        self.coff = np.polyfit(self.waypoints_wrt_vehicle[0,:], self.waypoints_wrt_vehicle[1,:], 3)
-
         # Run the minimization
         control_inputs = [0,0] * self.prediction_horizon
-        control_inputs = minimize(self.cost_function, control_inputs, method='SLSQP' , bounds = self.bounds)
+        control_inputs = minimize(self.cost_function, control_inputs, method='SLSQP' , bounds = self.bounds) #L-BFGS-B
         control_inputs = control_inputs.x
+        
+        if self.mpc_plot:
+            self.plot_traj_carla(control_inputs)
 
         for i in range(self.control_horizon):
+            s = time.time()
             if control_inputs[i] >= 0:
                 throttle = control_inputs[i]
                 brake = 0
@@ -242,3 +283,5 @@ class MPC:
 
             control = carla.VehicleControl(throttle, steering_angle, brake)
             self.vehicle.apply_control(control)
+        
+            

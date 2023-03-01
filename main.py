@@ -1,4 +1,3 @@
-
 import sys
 import glob
 import os
@@ -24,7 +23,6 @@ except IndexError:
     pass
 
 import carla
-
 from agents.navigation.global_route_planner import GlobalRoutePlanner
 from agents.navigation.global_route_planner_dao import GlobalRoutePlannerDAO
 
@@ -66,16 +64,17 @@ def get_current_states(Ego):
         "lat_acc": round(ego_acc[1],2),
         "lane": ego_wpt.lane_id,
         "waypoint": ego_wpt,
-        "speed": ego_speed
+        "speed": ego_speed,
+        "transformation_matrix": transform_matrix
     }
     return current_state
 
-def draw_trajectory(world, x,y, height=0.5):
+def draw_trajectory(world, x,y, height=1):
 
     for i in range(len(x)):
             begin = carla.Location(x=x[i],y=y[i],z=height)
-            world.debug.draw_point(begin,size=0.2,life_time=10)
-            
+            world.debug.draw_point(begin,size=0.1,life_time=0.3)
+
 if __name__ == "__main__":
 
 
@@ -88,11 +87,11 @@ if __name__ == "__main__":
 
     # Get start and end points
     spawn_points = world.get_map().get_spawn_points()
-    start_point_car = carla.Transform(carla.Location(x=-10, y=115.80, z=0.5), carla.Rotation(yaw=90))
+    start_point_car = carla.Transform(carla.Location(x=-10, y=45.80, z=0.5), carla.Rotation(yaw=90))
     start_point_route = carla.Transform(carla.Location(x=-10, y=40.80, z=0.5), carla.Rotation(yaw=90))
-    obs = carla.Transform(carla.Location(x=-10, y=80.80, z=0.5), carla.Rotation(yaw=90))
+    # obs = carla.Transform(carla.Location(x=-10, y=80.80, z=0.5), carla.Rotation(yaw=90))
     end_point = carla.Transform(carla.Location(x=-65, y=132, z=0.5))
-    #end_point = random.choice(spawn_points)    
+    # end_point = random.choice(spawn_points)    
 
 
     #Generate Global Path Waypoints
@@ -119,9 +118,9 @@ if __name__ == "__main__":
     blueprint_library = world.get_blueprint_library()
     vehicle_bp = random.choice(blueprint_library.filter('model3'))
     Ego = world.spawn_actor(vehicle_bp,start_point_car)
-    obs_veh = world.spawn_actor(vehicle_bp,obs)
+    # obs_veh = world.spawn_actor(vehicle_bp,obs)
     actors.append(Ego)
-    actors.append(obs_veh)
+    # actors.append(obs_veh)
 
 
     # Setup parameters
@@ -131,18 +130,26 @@ if __name__ == "__main__":
     # Setup Behavior Planner
     behavior_planner = BehaviorPlanner()
     local_planner = LocalPlanner(world,sp,s,rx,ry,ryaw,rk)
-    controller = MPC(Ego)
+    controller = MPC(Ego, world)
 
-    time.sleep(2)
+    time.sleep(5)
     while  not reached_goal:
+        s = time.time()
         current_state = get_current_states(Ego)
-        vehicles = [get_current_states(obs_veh)]
-        state = behavior_planner.get_next_behavior(current_state,None,vehicles)
+        
+        # vehicles = [get_current_states(obs_veh)]
+        # state = behavior_planner.get_next_behavior(current_state,None,vehicles)
 
-        x, y, yaw,v = local_planner.run_step(current_state,4)
-        draw_trajectory(world,x,y,height=2)
-        break
+        x, y, yaw,v = local_planner.run_step(current_state,4) 
+        draw_trajectory(world, x,y)
 
+        controller.update_waypoints(x, y, yaw, v, current_state)
+        controller.run_step()
+
+        e = time.time()
+        # print(e-s)
+
+    Ego.apply_control(carla.VehicleControl(0, 0, 0))
 
        
 
