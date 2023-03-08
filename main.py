@@ -90,8 +90,8 @@ if __name__ == "__main__":
     start_point_car = carla.Transform(carla.Location(x=-10, y=45.80, z=0.5), carla.Rotation(yaw=90))
     start_point_route = carla.Transform(carla.Location(x=-10, y=40.80, z=0.5), carla.Rotation(yaw=90))
     # obs = carla.Transform(carla.Location(x=-10, y=80.80, z=0.5), carla.Rotation(yaw=90))
-    end_point = carla.Transform(carla.Location(x=-65, y=132, z=0.5))
-    # end_point = random.choice(spawn_points)    
+    # end_point = carla.Transform(carla.Location(x=-65, y=132, z=0.5))
+    end_point = random.choice(spawn_points)    
 
 
     #Generate Global Path Waypoints
@@ -103,9 +103,9 @@ if __name__ == "__main__":
 
 
     # Generate refrence path using spline fitting on waypoints.
-    x = [i.transform.location.x for i in waypoints_]
-    y = [i.transform.location.y for i in waypoints_]
-    sp = Spline2D(x, y)
+    global_x = [i.transform.location.x for i in waypoints_]
+    global_y = [i.transform.location.y for i in waypoints_]
+    sp = Spline2D(global_x, global_y)
     s = np.arange(0, sp.s[-1], 0.5)
     rx, ry, ryaw, rk = [], [], [], []
     for i_s in s:
@@ -130,7 +130,7 @@ if __name__ == "__main__":
     # Setup Behavior Planner
     behavior_planner = BehaviorPlanner()
     local_planner = LocalPlanner(world,sp,s,rx,ry,ryaw,rk)
-    controller = MPC(Ego, world)
+    controller = MPC(Ego, world, global_x, global_y)
 
     time.sleep(5)
     while  not reached_goal:
@@ -142,7 +142,7 @@ if __name__ == "__main__":
 
         x, y, yaw,v = local_planner.run_step(current_state,4) 
         draw_trajectory(world, x,y)
-
+        
         controller.update_waypoints(x, y, yaw, v, current_state)
         controller.run_step()
 
