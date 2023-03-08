@@ -21,6 +21,33 @@ except IndexError:
 
 import carla
 
+# Set up the plot
+plt.ion()  # Turn on interactive mode
+fig_1, plot_traj = plt.subplots()
+x_mpc, y_mpc, x_planner, y_planner = [], [], [], []
+xy_mpc, = plot_traj.plot([], [], 'r-', label="MPC")
+xy_planner, = plot_traj.plot([], [], 'b-', label="Motion Planner Trajectory")
+xy_global, = plot_traj.plot([], [], 'k--', label="Global Path")
+plot_traj.legend([xy_mpc, xy_planner, xy_global], [xy_mpc.get_label(), xy_planner.get_label(), xy_global.get_label()], loc=0)
+plot_traj.set_xlabel("X")
+plot_traj.set_ylabel("Y")
+
+fig_2, plot_vel = plt.subplots()
+v_mpc, v_planner, time_data = [], [], []
+vt_mpc, = plot_vel.plot([], [], 'r-', label="MPC Velocity")
+vt_planner, = plot_vel.plot([], [], 'b-', label="Motion Planner Velocity")
+plot_vel.legend([vt_mpc, vt_planner], [vt_mpc.get_label(), vt_planner.get_label()], loc=0)
+plot_vel.set_xlabel("time")
+plot_vel.set_ylabel("velocity")
+
+# fig_3, plot_str = plt.subplots()
+# str_mpc = []
+# strt_mpc, = plot_str.plot([], [], 'g-')
+# plot_str.set_ylim(-1.22,1.22)
+# plot_str.set_xlabel("time")
+# plot_str.set_ylabel("Steering Angle")
+
+
 class PIDController:
     def __init__(self, vehicle):
         # Set up the PID controller gains
@@ -88,7 +115,7 @@ class inputs:
         self.brake = brake
 
 class MPC:
-    def __init__(self, vehicle, world, dt = 0.2, prediction_horizon = 8, control_horizon = 1):
+    def __init__(self, vehicle, world, global_x, global_y, dt = 0.2, prediction_horizon = 8, control_horizon = 1):
         self.w_cte = 0.5
         self.w_eyaw = 10.0
         self.w_dthr = 100.0
@@ -114,6 +141,9 @@ class MPC:
         self.lr = 1.445
         self.lf = 1.445
         self.coff = []
+
+        self.global_x = global_x
+        self.global_y = global_y
         self.waypoints = []
         self.waypoints_wrt_vehicle = []
         
@@ -123,10 +153,74 @@ class MPC:
 
         self.mpc_plot = True
     
-    def normalize_angle(self, angle):
+    def convert_angle(self, angle):
         angle = np.asarray(angle)
         
         return np.where(angle<0, 2*np.pi+angle, angle)
+    
+    def normalize_angle(self, angle):
+        return angle % (2 * np.pi)
+
+    def angle_diff(self, a, b):
+        diff = abs(a-b) % (2 * np.pi)
+        return 2 * np.pi - diff if diff > np.pi else diff
+
+    def plot_traj_carla(self, control_inputs):
+        curr_state = self.vehicle_state
+        for itr in range(self.prediction_horizon):
+            des_next_state = state(self.waypoints[0,itr],self.waypoints[1,itr],self.waypoints_wrt_vehicle[2,itr],self.waypoints_wrt_vehicle[3,itr])
+
+            next_state = self.get_next_state(curr_state, control_inputs[itr], control_inputs[itr+self.prediction_horizon], des_next_state)
+            
+            curr_point = carla.Location(x=curr_state.x,y=curr_state.y,z=0.1)
+            next_point = carla.Location(x=next_state.x,y=next_state.y,z=0.1)
+            
+            self.world.debug.draw_arrow(curr_point, next_point, thickness=0.1, arrow_size=0.1, color=carla.Color(255, 0, 0), life_time=0.3)
+            curr_state = next_state
+            if itr == 0:
+                x = curr_state.x  # Update the x value
+                y = curr_state.y  # Generate a random y value
+                v = curr_state.v
+
+                desx = des_next_state.x
+                desy = des_next_state.y
+                desv = des_next_state.v
+                                
+                t = round(time.time(),2)
+                str = control_inputs[itr+self.prediction_horizon]
+                thr = control_inputs[itr]
+                
+        x_mpc.append(x)
+        y_mpc.append(y)
+        x_planner.append(desx)
+        y_planner.append(desy)
+
+        xy_mpc.set_data(x_mpc, y_mpc)  # Update the line data
+        xy_planner.set_data(x_planner, y_planner)  # Update the line data
+        xy_global.set_data(self.global_x, self.global_y)
+        plot_traj.relim()  # Update the axes limits
+        plot_traj.autoscale_view()  # Autoscale the view
+        fig_1.canvas.draw()  # Redraw the figure
+        fig_1.canvas.flush_events()  # Flush the GUI events
+
+        time_data.append(t)
+
+        v_mpc.append(v)
+        
+        vt_mpc.set_data(time_data, v_mpc)  # Update the line data
+        vt_planner.set_data(time_data, v_planner)  # Update the line data
+        plot_vel.relim()  # Update the axes limits
+        plot_vel.autoscale_view()  # Autoscale the view
+        fig_2.canvas.draw()  # Redraw the figure
+        fig_2.canvas.flush_events()  # Flush the GUI events
+
+        # str_mpc.append(str)
+        # v_planner.append(desv)
+        # strt_mpc.set_data(time_data, str_mpc)
+        # plot_str.relim()  # Update the axes limits
+        # plot_str.autoscale_view()  # Autoscale the view
+        # fig_3.canvas.draw()  # Redraw the figure
+        # fig_3.canvas.flush_events()  # Flush the GUI events
 
     def convert_input_to_carla(self, str_angle, throttle, brake):
         str_angle = str_angle / self.str_bounds[1]
@@ -138,7 +232,7 @@ class MPC:
     def update_vehicle_state(self, x=0, y=0, yaw=0, v=0, cte=0, eyaw=0):
         self.vehicle_state.x = x
         self.vehicle_state.y = y
-        self.vehicle_state.yaw = self.normalize_angle(yaw)
+        self.vehicle_state.yaw = self.convert_angle(yaw)
         self.vehicle_state.v = v
         self.vehicle_state.cte = cte
         self.vehicle_state.eyaw = eyaw
@@ -149,7 +243,7 @@ class MPC:
         self.waypoints = np.zeros(shape=(4, np.shape(x)[0]-1))
         self.waypoints[0,:] = x[1:]
         self.waypoints[1,:] = y[1:]
-        self.waypoints[2,:] = self.normalize_angle(yaw[1:])
+        self.waypoints[2,:] = self.convert_angle(yaw[1:])
         self.waypoints[3,:] = v[1:]        
     
     def global_to_vehicle(self, waypoints):
@@ -181,12 +275,12 @@ class MPC:
         next_state = state()
         next_state.x = curr_state.x + curr_state.v*np.cos(curr_state.yaw + curr_state.beta)*self.dt
         next_state.y = curr_state.y + curr_state.v*np.sin(curr_state.yaw + curr_state.beta)*self.dt
-        next_state.beta = np.arctan((self.lr/self.length)*np.tan(control_input.str_angle))
-        next_state.yaw = curr_state.yaw + curr_state.v/self.lr * np.sin(next_state.beta)*self.dt
+        next_state.beta = self.normalize_angle(np.arctan((self.lr/self.length)*np.tan(control_input.str_angle)))
+        next_state.yaw = self.normalize_angle(curr_state.yaw + curr_state.v/self.lr * np.sin(next_state.beta)*self.dt)
         next_state.v = curr_state.v + control_input.throttle*self.dt
         
         next_state.cte = (next_state.x - des_next_state.x)**2 + (next_state.y - des_next_state.y)**2 
-        next_state.eyaw = (next_state.yaw - des_next_state.yaw)**2
+        next_state.eyaw = (self.angle_diff(next_state.yaw, des_next_state.yaw))**2
 
         return next_state
 
@@ -202,7 +296,7 @@ class MPC:
     def get_costs(self, next_state, control_inputs, itr):
         cost_cte = self.w_cte*(next_state.cte)
         cost_eyaw = self.w_eyaw*(next_state.eyaw)
-        cost_vel = self.w_vel * (next_state.v - self.waypoints[3,-1])**2
+        cost_vel = self.w_vel * (next_state.v - self.waypoints[3,-1])**2 #Checking with final value
         cost_thr = self.w_thr*(control_inputs[itr])**2
         cost_str = self.w_str*(control_inputs[itr+self.prediction_horizon])**2
         if itr!=0:
@@ -230,27 +324,11 @@ class MPC:
 
         for itr in range(self.prediction_horizon):
             des_next_state = state(self.waypoints[0,itr],self.waypoints[1,itr],self.waypoints[2,itr])
-
             next_state = self.get_next_state(curr_state, control_inputs[itr], control_inputs[itr+self.prediction_horizon], des_next_state)
-            
             curr_state = next_state
-
             cost += self.get_costs(next_state, control_inputs, itr)
         # print(cost)
         return cost
-    
-    def plot_traj_carla(self, control_inputs):
-        curr_state = self.vehicle_state
-        for itr in range(self.prediction_horizon):
-            des_next_state = state(self.waypoints[0,itr],self.waypoints[1,itr],self.waypoints_wrt_vehicle[2,itr])
-
-            next_state = self.get_next_state(curr_state, control_inputs[itr], control_inputs[itr+self.prediction_horizon], des_next_state)
-            
-            curr_point = carla.Location(x=curr_state.x,y=curr_state.y,z=0.1)
-            next_point = carla.Location(x=next_state.x,y=next_state.y,z=0.1)
-            
-            self.world.debug.draw_arrow(curr_point, next_point, thickness=0.1, arrow_size=0.1, color=carla.Color(255, 0, 0), life_time=0.3)
-            curr_state = next_state
 
     def run_step(self):
         # Transfer the coordinates from global coordinates to vehicle coordinates
@@ -263,6 +341,7 @@ class MPC:
         
         if self.mpc_plot:
             self.plot_traj_carla(control_inputs)
+            plt.show()
 
         for i in range(self.control_horizon):
             s = time.time()
