@@ -194,7 +194,6 @@ class LocalPlanner:
         s_d = [self.lon_traj_frenet.calc_vel(t) for t in np.arange(0,self.planning_duration + self.dt, self.dt)]
         d_d = [self.lat_traj_frenet.calc_vel(t) for t in np.arange(0,self.planning_duration + self.dt, self.dt)]
 
-
         xy = [self.refrence_path.calc_position(s_i) for s_i in s]
         ref_yaw = [ self.refrence_path.calc_yaw(s_i) for s_i in s]
         x = []
@@ -228,36 +227,42 @@ class LocalPlanner:
         goal_sets.append((goal_s,goal_d))
         left = waypoint.get_left_lane()
         right = waypoint.get_right_lane()
-        temp_d = 0
-        while left is not None and left.get_left_lane().lane_id*left.lane_id >=0 and left.lane_type == carla.LaneType.Driving :
+
+        if left is not None and left.lane_id*waypoint.lane_id >=0 and left.lane_type == carla.LaneType.Driving :
             temp_d = goal_d - lane_width
             goal_sets.append((goal_s,temp_d))
-            left = left.get_left_lane()
         
-        temp_d = 0
-        while right is not None and right.get_right_lane().lane_id*right.lane_id >=0 and right.lane_type == carla.LaneType.Driving:
+        if right is not None and right.lane_id*waypoint.lane_id >=0 and right.lane_type == carla.LaneType.Driving:
             temp_d = goal_d + lane_width
             goal_sets.append((goal_s,temp_d))
-            right = right.get_right_lane()
 
         return goal_sets
 
 
-    def run_step(self,current_state,target_lon_vel):
+    def run_step(self,current_state, state, target_s, target_s_d, target_s_dd):
 
-        # Calculate current s and d
-        current_s,current_d = self.cartesian_to_frenet(current_state['x'], current_state['y'])
-        self.planning_horizon = current_state["speed"]*self.planning_duration + (self.max_acceleration*self.planning_duration**2)/2.0
-        self.planning_horizon = 20
-        goal_s = current_s + self.planning_horizon
-        goal_d = 0
+        goal_sets = ((target_s,0),(target_s,1.5),(target_s,-1.5),(target_s,0.75),(target_s,-0.75))
+        x_set = []
+        y_set = []
+        yaw_set = []
+        v_set = []
+        for goal in goal_sets:
+            target_speed = current_state["target_speed"]
+            
+            target_speed = 8
+            if state == "follow_lane":
+                
+                self.lon_traj_frenet = QuarticPolynomial(current_state["s"],current_state["long_vel"], current_state["long_acc"],target_speed,0,self.planning_duration)
+                self.lat_traj_frenet = QuinticPolynomial(current_state["d"],current_state["lat_vel"], current_state["lat_acc"],goal[1],0,0,self.planning_duration)
+                
+            else:
+                self.lon_traj_frenet = QuinticPolynomial(current_state["s"],current_state["long_vel"],current_state["long_acc"],goal[0],target_s_d,target_s_dd,self.planning_duration)
+                self.lat_traj_frenet = QuinticPolynomial(current_state["d"],current_state["lat_vel"],current_state["lat_acc"],goal[1],0,0,self.planning_duration)
 
-        self.lon_traj_frenet = QuarticPolynomial(round(current_s,2),5,
-                                current_state["long_acc"],target_lon_vel,0,self.planning_duration)
-
-        self.lat_traj_frenet = QuinticPolynomial(round(current_d,2),current_state["lat_vel"],
-                                current_state["lat_acc"],goal_d,0,0,self.planning_duration)
-
-        x , y, yaw, v = self.calculate_global_path()
-
-        return x, y, yaw, v
+            x , y, yaw, v = self.calculate_global_path()
+            x_set.append(x)
+            y_set.append(y)
+            yaw_set.append(yaw)
+            v_set.append(v)
+        return x_set[0], y_set[0], yaw_set[0], v_set[0]
+        # return x, y, yaw, v
