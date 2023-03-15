@@ -249,7 +249,7 @@ class LocalPlanner:
         for goal in goal_sets:
             target_speed = current_state["target_speed"]
             
-            target_speed = 8
+            target_speed = 13
             if state == "follow_lane":
                 
                 self.lon_traj_frenet = QuarticPolynomial(current_state["s"],current_state["long_vel"], current_state["long_acc"],target_speed,0,self.planning_duration)

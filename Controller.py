@@ -3,9 +3,12 @@ import sys
 import time
 import glob
 import os
+import shutil
 import numpy as np
 from scipy.optimize import minimize, differential_evolution
 from matplotlib import pyplot as plt
+
+from torch.utils.tensorboard import SummaryWriter
 
 try:
     sys.path.append(glob.glob('../carla/dist/carla-*%d.%d-%s.egg' % (
@@ -32,13 +35,13 @@ plot_traj.legend([xy_mpc, xy_planner, xy_global], [xy_mpc.get_label(), xy_planne
 plot_traj.set_xlabel("X")
 plot_traj.set_ylabel("Y")
 
-fig_2, plot_vel = plt.subplots()
-v_mpc, v_planner, time_data = [], [], []
-vt_mpc, = plot_vel.plot([], [], 'r-', label="MPC Velocity")
-vt_planner, = plot_vel.plot([], [], 'b-', label="Motion Planner Velocity")
-plot_vel.legend([vt_mpc, vt_planner], [vt_mpc.get_label(), vt_planner.get_label()], loc=0)
-plot_vel.set_xlabel("time")
-plot_vel.set_ylabel("velocity")
+# fig_2, plot_vel = plt.subplots()
+# v_mpc, v_planner, time_data = [], [], []
+# vt_mpc, = plot_vel.plot([], [], 'r-', label="MPC Velocity")
+# vt_planner, = plot_vel.plot([], [], 'b-', label="Motion Planner Velocity")
+# plot_vel.legend([vt_mpc, vt_planner], [vt_mpc.get_label(), vt_planner.get_label()], loc=0)
+# plot_vel.set_xlabel("time")
+# plot_vel.set_ylabel("velocity")
 
 # fig_3, plot_str = plt.subplots()
 # str_mpc = []
@@ -47,14 +50,14 @@ plot_vel.set_ylabel("velocity")
 # plot_str.set_xlabel("time")
 # plot_str.set_ylabel("Steering Angle")
 
-fig_4, plot_acc = plt.subplots()
-acc_mpc, realacc_carla = [], []
-acct_mpc, = plot_acc.plot([], [], 'g-', label="MPC")
-realacct_carla, = plot_acc.plot([], [], 'b-', label="Carla Acceleration")
-plot_acc.legend([acct_mpc, realacct_carla], [acct_mpc.get_label(), realacct_carla.get_label()], loc=0)
-plot_acc.set_ylim(-12,12)
-plot_acc.set_xlabel("time")
-plot_acc.set_ylabel("Acceleration")
+# fig_4, plot_acc = plt.subplots()
+# acc_mpc, realacc_carla = [], []
+# acct_mpc, = plot_acc.plot([], [], 'g-', label="MPC")
+# realacct_carla, = plot_acc.plot([], [], 'b-', label="Carla Acceleration")
+# plot_acc.legend([acct_mpc, realacct_carla], [acct_mpc.get_label(), realacct_carla.get_label()], loc=0)
+# plot_acc.set_ylim(-12,12)
+# plot_acc.set_xlabel("time")
+# plot_acc.set_ylabel("Acceleration")
 
 
 
@@ -127,21 +130,21 @@ class inputs:
 
 class MPC:
     def __init__(self, vehicle, world, global_x, global_y, dt = 0.2, prediction_horizon = 8, control_horizon = 1):
-        self.w_cte = 0.5
-        self.w_eyaw = 10.0
-        self.w_dthr = 2000.0
-        self.w_dstr = 10.0
-        self.w_thr = 0.0
-        self.w_str = 10.0
+        self.w_cte = 0.05
+        self.w_eyaw = 60.0
+        self.w_dthr = 2500.0
+        self.w_dstr = 1000.0
+        self.w_thr = 1.0
+        self.w_str = 1.0
         self.w_vel = 5.0
-        self.w_dvel = 50.0
+        self.w_dvel = 200.0
 
         self.dt = dt
         self.prediction_horizon = prediction_horizon
         self.control_horizon = control_horizon
 
         # Control Input Bounds
-        self.thr_offset = 0.37
+        self.thr_offset = 0.4
         self.thr_bounds = (-2.0, 2.0)
         self.str_bounds = (-1.22, 1.22)
         self.bounds = (self.thr_bounds,)*self.prediction_horizon + (self.str_bounds,)*self.prediction_horizon
@@ -154,7 +157,7 @@ class MPC:
         self.lr = 1.445
         self.lf = 1.445
         self.coff = []
-
+        global_x = [ -x for x in global_x]
         self.global_x = global_x
         self.global_y = global_y
         self.waypoints = []
@@ -164,7 +167,14 @@ class MPC:
         self.vehicle = vehicle
         self.world = world
 
-        self.mpc_plot = False
+        self.mpc_plot = True
+        self.exp_name = "Experiment_1"
+        self.log_graph_path = "./LogGraphs/" + self.exp_name
+        if not os.path.exists(self.log_graph_path):
+            os.makedirs(self.log_graph_path)
+        else:
+            shutil.rmtree(self.log_graph_path + "/", ignore_errors=True)
+        self.graph_creator = SummaryWriter(self.log_graph_path)
         self.start_time = round(time.time(),2)
     
     def convert_angle(self, angle):
@@ -194,11 +204,11 @@ class MPC:
             self.world.debug.draw_arrow(curr_point, next_point, thickness=0.1, arrow_size=0.1, color=carla.Color(255, 0, 0), life_time=0.3)
             curr_state = next_state
             if itr == 0:
-                x = curr_state.x  # Update the x value
+                x = -curr_state.x  # Update the x value
                 y = curr_state.y  # Generate a random y value
                 v = curr_state.v
 
-                desx = des_next_state.x
+                desx = -des_next_state.x
                 desy = des_next_state.y
                 desv = des_next_state.v
                                 
@@ -206,6 +216,11 @@ class MPC:
                 str = control_inputs[itr+self.prediction_horizon]
                 acc = control_inputs[itr]
             future_v.append(next_state.v)
+
+        self.graph_creator.add_scalar("Steering Angle",str, global_step=t)
+        self.graph_creator.add_scalars("Velocity (mph)",{"Velocity Predicted by MPC":v*2.24, "Velocity Proposed by Local Planner":desv*2.24, "Current Velocity in CARLA":self.vehicle_state.v*2.24},global_step=t)
+        self.graph_creator.add_scalars("Acceleration",{"Acceleration Predicted by MPC":acc, "Carla Acceleration":realacc}, global_step=t)
+
         # print("MPC Future Velocity: ", future_v)
                 
         x_mpc.append(x)
@@ -218,19 +233,20 @@ class MPC:
         xy_global.set_data(self.global_x, self.global_y)
         plot_traj.relim()  # Update the axes limits
         plot_traj.autoscale_view()  # Autoscale the view
+        plot_traj.set_aspect('equal')
         fig_1.canvas.draw()  # Redraw the figure
         fig_1.canvas.flush_events()  # Flush the GUI events
 
-        time_data.append(t)
+        # time_data.append(t)
 
-        v_mpc.append(v)
-        v_planner.append(desv)
-        vt_mpc.set_data(time_data, v_mpc)  # Update the line data
-        vt_planner.set_data(time_data, v_planner)  # Update the line data
-        plot_vel.relim()  # Update the axes limits
-        plot_vel.autoscale_view()  # Autoscale the view
-        fig_2.canvas.draw()  # Redraw the figure
-        fig_2.canvas.flush_events()  # Flush the GUI events
+        # v_mpc.append(v)
+        # v_planner.append(desv)
+        # vt_mpc.set_data(time_data, v_mpc)  # Update the line data
+        # vt_planner.set_data(time_data, v_planner)  # Update the line data
+        # plot_vel.relim()  # Update the axes limits
+        # plot_vel.autoscale_view()  # Autoscale the view
+        # fig_2.canvas.draw()  # Redraw the figure
+        # fig_2.canvas.flush_events()  # Flush the GUI events
 
         # str_mpc.append(str)
         # strt_mpc.set_data(time_data, str_mpc)
@@ -239,14 +255,14 @@ class MPC:
         # fig_3.canvas.draw()  # Redraw the figure
         # fig_3.canvas.flush_events()  # Flush the GUI events
 
-        acc_mpc.append(acc)
-        realacc_carla.append(realacc)
-        acct_mpc.set_data(time_data, acc_mpc)
-        realacct_carla.set_data(time_data, realacc_carla)
-        plot_acc.relim()  # Update the axes limits
-        plot_acc.autoscale_view()  # Autoscale the view
-        fig_4.canvas.draw()  # Redraw the figure
-        fig_4.canvas.flush_events()  # Flush the GUI events
+        # acc_mpc.append(acc)
+        # realacc_carla.append(realacc)
+        # acct_mpc.set_data(time_data, acc_mpc)
+        # realacct_carla.set_data(time_data, realacc_carla)
+        # plot_acc.relim()  # Update the axes limits
+        # plot_acc.autoscale_view()  # Autoscale the view
+        # fig_4.canvas.draw()  # Redraw the figure
+        # fig_4.canvas.flush_events()  # Flush the GUI events
 
     def convert_input_to_carla(self, str_angle, acceleration):
         str_angle = str_angle / self.str_bounds[1]
