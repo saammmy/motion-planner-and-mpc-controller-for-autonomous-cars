@@ -189,7 +189,7 @@ class MPC:
         diff = abs(a-b) % (2 * np.pi)
         return 2 * np.pi - diff if diff > np.pi else diff
 
-    def plot_traj_carla(self, control_inputs):
+    def plot_traj_carla(self, control_inputs, throttle_ip, steer_ip, brake_ip):
         curr_state = self.vehicle_state
         realacc = curr_state.a
         future_v = []
@@ -217,9 +217,13 @@ class MPC:
                 acc = control_inputs[itr]
             future_v.append(next_state.v)
 
-        self.graph_creator.add_scalar("Steering Angle",str, global_step=t)
+        self.graph_creator.add_scalar("Steering Angle (Degree)",str*180/np.pi, global_step=t)
         self.graph_creator.add_scalars("Velocity (mph)",{"Velocity Predicted by MPC":v*2.24, "Velocity Proposed by Local Planner":desv*2.24, "Current Velocity in CARLA":self.vehicle_state.v*2.24},global_step=t)
         self.graph_creator.add_scalars("Acceleration",{"Acceleration Predicted by MPC":acc, "Carla Acceleration":realacc}, global_step=t)
+        self.graph_creator.add_scalar("Steering Input to Carla",steer_ip, global_step=t)
+        self.graph_creator.add_scalar("Throttle Input to Carla",throttle_ip, global_step=t)
+        self.graph_creator.add_scalar("Brake Input to Carla", brake_ip, global_step=t)
+        
 
         # print("MPC Future Velocity: ", future_v)
                 
@@ -269,14 +273,14 @@ class MPC:
         acc_maped = acceleration / self.thr_bounds[1]
 
         if acc_maped >= 0:
-            throttle = acc_maped + self.thr_offset
+            throttle = min(acc_maped + self.thr_offset,1)
             brake = 0
         elif acc_maped < 0 and acc_maped > -self.thr_offset:
             throttle = 0
             brake = 0
         else:
             throttle = 0
-            brake = min(abs(acc_maped),0)
+            brake = min(abs(acc_maped),1)
 
         return str_angle, throttle, brake
 
@@ -393,10 +397,7 @@ class MPC:
         control_inputs = minimize(self.cost_function, control_inputs, method='SLSQP' , bounds = self.bounds) #L-BFGS-B
         control_inputs = control_inputs.x
         
-        if self.mpc_plot:
-            self.plot_traj_carla(control_inputs)
-            # print("Local Planner Future Velocities: ", self.waypoints[3,:])
-            plt.show()
+       
 
         for i in range(self.control_horizon):
             s = time.time()
@@ -408,6 +409,10 @@ class MPC:
             #     deacceleration = 0 #control_inputs[i]
             # steering_angle = control_inputs[i+self.prediction_horizon]
             steering_angle, throttle, brake = self.convert_input_to_carla(control_inputs[i+self.prediction_horizon], control_inputs[i])
+            if self.mpc_plot:
+                self.plot_traj_carla(control_inputs, throttle, steering_angle, brake)
+                # print("Local Planner Future Velocities: ", self.waypoints[3,:])
+                plt.show()
             # print("Waypoints: ", self.waypoints)
             # print("Waypoints wrt vehicle ", self.waypoints_wrt_vehicle)
             # print("Control Inputs ", control_inputs)
