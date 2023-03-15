@@ -97,14 +97,15 @@ if __name__ == "__main__":
     # Setup CARLA Simualtor
     client = carla.Client('localhost',2000)
     client.set_timeout(10.0)
-    world = client.load_world('Town03')
+    world = client.load_world('Town05')
     actors = []
 
 
     # Get start and end points
     spawn_points = world.get_map().get_spawn_points()
-    start_point_car = carla.Transform(carla.Location(x=-10, y=45.80, z=0.5), carla.Rotation(yaw=90))
-    start_point_route = carla.Transform(carla.Location(x=-10, y=40.80, z=0.5), carla.Rotation(yaw=90))
+    start_point_car = carla.Transform(carla.Location(x=189.740814, y=-11.026948, z=0.300000), carla.Rotation(pitch=0.000000, yaw=90, roll=0.000000))
+    print(start_point_car)
+    start_point_route = carla.Transform(carla.Location(x=189.740814, y=-20.026948, z=0.300000), carla.Rotation(pitch=0.000000, yaw=90, roll=0.000000))
     # obs = carla.Transform(carla.Location(x=-10, y=70.80, z=0.5), carla.Rotation(yaw=90))
     obs = carla.Transform(carla.Location(x= 171, y= 93, z=0.5), carla.Rotation(yaw=270))
     # end_point = carla.Transform(carla.Location(x=-105, y=132, z=0.5))
