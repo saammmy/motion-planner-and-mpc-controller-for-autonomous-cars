@@ -103,14 +103,13 @@ if __name__ == "__main__":
 
     # Get start and end points
     spawn_points = world.get_map().get_spawn_points()
-    start_point_car = carla.Transform(carla.Location(x=189.740814, y=-11.026948, z=0.300000), carla.Rotation(pitch=0.000000, yaw=90, roll=0.000000))
-    print(start_point_car)
-    start_point_route = carla.Transform(carla.Location(x=189.740814, y=-20.026948, z=0.300000), carla.Rotation(pitch=0.000000, yaw=90, roll=0.000000))
+    start_point_car = carla.Transform(carla.Location(x=193, y=-11.026948, z=0.300000), carla.Rotation(pitch=0.000000, yaw=90, roll=0.000000))
+    start_point_route = carla.Transform(carla.Location(x=193, y=-20.026948, z=0.300000), carla.Rotation(pitch=0.000000, yaw=90, roll=0.000000))
     # obs = carla.Transform(carla.Location(x=-10, y=70.80, z=0.5), carla.Rotation(yaw=90))
     obs = carla.Transform(carla.Location(x= 171, y= 93, z=0.5), carla.Rotation(yaw=270))
     # end_point = carla.Transform(carla.Location(x=-105, y=132, z=0.5))
     # end_point = carla.Transform(carla.Location(x=210, y=63, z=0.5))
-    end_point = carla.Transform(carla.Location(x= 171, y= 70, z=0.5))
+    end_point = carla.Transform(carla.Location(x= -100, y= 187, z=0.5))
     # end_point = random.choice(spawn_points)    
 
     #Generate Global Path Waypoints
@@ -163,15 +162,15 @@ if __name__ == "__main__":
         s = time.time()
         current_state = get_current_states(Ego, local_planner)
         # TODO: Calculate lookahead distance based on velocity
-        state, target_s, target_s_d, target_s_dd = behavior_planner.get_next_behavior(current_state, lookahead_path= 10+ current_state["speed"]*1.6, vehicles=vehicles)
+        #state, target_s, target_s_d, target_s_dd = behavior_planner.get_next_behavior(current_state, lookahead_path= 10+ current_state["speed"]*1.6, vehicles=vehicles)
         # print("EGo Speed: ", current_state["speed"])
         # print("Current State", state)
-        if state == "SAFETY_STOP":
-             print("Applying Emergency Brake")
-             Ego.apply_control((carla.VehicleControl(throttle=0, brake=1)))
-             continue
+        # if state == "SAFETY_STOP":
+        #      print("Applying Emergency Brake")
+        #      Ego.apply_control((carla.VehicleControl(throttle=0, brake=1)))
+        #      continue
 
-        x, y, yaw,v = local_planner.run_step(current_state, state, target_s, target_s_d, target_s_dd) 
+        x, y, yaw,v = local_planner.run_step(current_state) 
         draw_trajectory(world, x,y)
         controller.update_waypoints(x, y, yaw, v, current_state)
         # print("------")

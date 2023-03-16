@@ -4,6 +4,9 @@ from matplotlib import pyplot as plt
 import glob
 import sys
 import os
+from plotter import *
+
+from velocity_generator.ramp_profile import *
 try:
     sys.path.append(glob.glob('../carla/dist/carla-*%d.%d-%s.egg' % (
         sys.version_info.major,
@@ -17,6 +20,42 @@ except IndexError:
     pass
 
 import carla
+
+
+class FrenetPath:
+
+    def __init__(self):
+        self.T = []
+        # time
+        self.t = []
+
+        # lateral traj in Frenet frame
+        self.d = []
+        self.d_d = []
+        self.d_dd = []
+        self.d_ddd = []
+
+        # longitudinal traj in Frenet frame
+        self.s = []
+        self.s_d = []
+        self.s_dd = []
+        self.s_ddd = []
+
+        # cost
+        self.c_lat = 0.0
+        self.c_lon = 0.0
+        self.c_tot = 0.0
+
+        # combined traj in global frame
+        self.x = []
+        self.y = []
+        self.yaw = []
+        self.ds = []
+        self.kappa = []
+        self.v = []
+        self.a = []
+        self.j = []
+
 
 class QuinticPolynomial:
 
@@ -106,6 +145,9 @@ class LocalPlanner:
         self.world = world
         self.planning_horizon = 20 #meters
         self.planning_duration = 1.6 #seconds
+        self.min_planning_horizon = 0.5 #seconds
+        self.max_planning_horizon = 2.0 #seconds
+        self.planning_horizon_dt = 0.5 # seconds
         self.dt = 0.2
         self.refrence_path = sp
         self.s = s
@@ -118,7 +160,17 @@ class LocalPlanner:
         self.traj_cartesian = None
         self.max_acceleration = 2 #m/s2
         self.target_velocity = None
+        self.velocity_generator = RampGenerator()
+
+        self.K_LAT = 1.0 
+        self.K_LON = 1.0 
+        self.K_Di = 20000
+
+        self.V_MAX = 20
+        self.ACC_MAX = 5
+        self.K_MAX = 30
     
+        self.trajectory_plot = plt.subplots(2, 2)
     def update_refrence(self,sp,s,x,y, yaw, curvature):
         self.refrence_path = sp
         self.s = s
@@ -218,51 +270,156 @@ class LocalPlanner:
 
         return x , y, yaw, v
 
+    def calc_global_paths(self, fplist):
 
-    def generate_goal_sets(self,waypoint,goal_s,goal_d):
+        # transform trajectory from Frenet to Global
+        for fp in fplist:
+
+            xy = [self.refrence_path.calc_position(s_i) for s_i in fp.s]
+            ref_yaw = [ self.refrence_path.calc_yaw(s_i) for s_i in fp.s]
+
+            for i in range(len(fp.s)):
+                _d = fp.d[i]
+                _x = xy[i][0] + _d*math.cos(ref_yaw[i] + math.pi/2.0)
+                _y = xy[i][1] + _d*math.sin(ref_yaw[i] + math.pi/2.0)
+                fp.x.append(_x)
+                fp.y.append(_y)
+
+            for i in range(len(fp.x) - 1):
+                dx = fp.x[i + 1] - fp.x[i]
+                dy = fp.y[i + 1] - fp.y[i]
+                fp.yaw.append(np.arctan2(dy, dx))
+                fp.ds.append(np.hypot(dx, dy))
+            fp.yaw.append(fp.yaw[-1])
+            fp.ds.append(fp.ds[-1])
+
+            # calc curvature
+            for i in range(len(fp.yaw) - 1):
+                yaw_diff = fp.yaw[i + 1] - fp.yaw[i]
+                yaw_diff = np.arctan2(np.sin(yaw_diff), np.cos(yaw_diff))
+                fp.kappa.append(yaw_diff / fp.ds[i])
+            # calc velocity 
+
+            for i in range(len(fp.s)):
+                vi = math.sqrt(fp.s_d[i]**2 + fp.d_d[i]**2)
+                fp.v.append(vi)
+
+            #calc acceleration
+            for i in range(len(fp.s)):
+                ai = math.sqrt(fp.s_dd[i]**2 + fp.d_dd[i]**2)
+                fp.a.append(ai)
+
+            #calc jerk
+            for i in range(len(fp.s)):
+                ji = math.sqrt(fp.s_ddd[i]**2 + fp.d_ddd[i]**2)
+                fp.j.append(ji)
+
+        return fplist
+
+
+    def check_path(self, fplist):
+        ok_ind = []
+        for i, _path in enumerate(fplist):
+            acc_squared = [(abs(a_s**2 + a_d**2)) for (a_s, a_d) in zip(_path.s_dd, _path.d_dd)]
+            if any([v > self.V_MAX for v in _path.s_d]):  # Max speed check
+                # print("MAX speed EXCESS")
+                continue
+            elif any([acc > self.ACC_MAX**2 for acc in fplist[i].a]):
+                # print("MAX accel EXCESS")
+                continue
+            elif any([abs(kappa) > self.K_MAX for kappa in fplist[i].kappa]):  # Max curvature check
+                # print("MAX kappa EXCESS")
+                continue
+
+            ok_ind.append(i)
+
+        return [fplist[i] for i in ok_ind]
+
+
+    def generate_goal_sets(self,waypoint):
 
         goal_sets = []
         lane_width = waypoint.lane_width
-
-        goal_sets.append((goal_s,goal_d))
+        goal_sets.append(0)
         left = waypoint.get_left_lane()
         right = waypoint.get_right_lane()
 
         if left is not None and left.lane_id*waypoint.lane_id >=0 and left.lane_type == carla.LaneType.Driving :
-            temp_d = goal_d - lane_width
-            goal_sets.append((goal_s,temp_d))
+            goal_sets.append(-lane_width)
         
         if right is not None and right.lane_id*waypoint.lane_id >=0 and right.lane_type == carla.LaneType.Driving:
-            temp_d = goal_d + lane_width
-            goal_sets.append((goal_s,temp_d))
+            goal_sets.append(lane_width)
 
         return goal_sets
 
 
-    def run_step(self,current_state, state, target_s, target_s_d, target_s_dd):
+    def run_step(self,current_state):
 
-        goal_sets = ((target_s,0),(target_s,1.5),(target_s,-1.5),(target_s,0.75),(target_s,-0.75))
-        x_set = []
-        y_set = []
-        yaw_set = []
-        v_set = []
+        goal_sets = self.generate_goal_sets(current_state["waypoint"])
+        frenet_paths = []
+        target_speed = current_state["target_speed"]  
+        target_speed = 5
+
         for goal in goal_sets:
-            target_speed = current_state["target_speed"]
-            
-            target_speed = 30
-            if state == "follow_lane":
-                
-                self.lon_traj_frenet = QuarticPolynomial(current_state["s"],current_state["long_vel"], current_state["long_acc"],target_speed,0,self.planning_duration)
-                self.lat_traj_frenet = QuinticPolynomial(current_state["d"],current_state["lat_vel"], current_state["lat_acc"],goal[1],0,0,self.planning_duration)
-                
-            else:
-                self.lon_traj_frenet = QuinticPolynomial(current_state["s"],current_state["long_vel"],current_state["long_acc"],goal[0],target_s_d,target_s_dd,self.planning_duration)
-                self.lat_traj_frenet = QuinticPolynomial(current_state["d"],current_state["lat_vel"],current_state["lat_acc"],goal[1],0,0,self.planning_duration)
+            for planning_time in np.arange(self.min_planning_horizon, self.max_planning_horizon + self.planning_horizon_dt, self.planning_horizon_dt):
+                fp = FrenetPath()
+                fp.T = planning_time
+                self.lat_traj_frenet = QuinticPolynomial(current_state["d"],current_state["lat_vel"], current_state["lat_acc"],goal,0,0,planning_time)
 
-            x , y, yaw, v = self.calculate_global_path()
-            x_set.append(x)
-            y_set.append(y)
-            yaw_set.append(yaw)
-            v_set.append(v)
-        return x_set[0], y_set[0], yaw_set[0], v_set[0]
-        # return x, y, yaw, v
+                fp.t = [t for t in np.arange(0.0, planning_time + self.dt , self.dt)]
+                # print(fp.t)
+                fp.d = [self.lat_traj_frenet.calc_pos(t) for t in fp.t]
+                fp.d_d = [self.lat_traj_frenet.calc_vel(t) for t in fp.t]
+                fp.d_dd = [self.lat_traj_frenet.calc_acc(t) for t in fp.t]
+                fp.d_ddd = [self.lat_traj_frenet.calc_jerk(t) for t in fp.t]
+
+                self.lon_traj_frenet = QuarticPolynomial(current_state["s"],current_state["long_vel"], current_state["long_acc"],target_speed,0,planning_time)
+
+                fp.s = [self.lon_traj_frenet.calc_pos(t) for t in fp.t]
+                fp.s_d = [self.lon_traj_frenet.calc_vel(t) for t in fp.t] 
+                fp.s_dd = [self.lon_traj_frenet.calc_acc(t) for t in fp.t]
+                fp.s_ddd = [self.lon_traj_frenet.calc_jerk(t) for t in fp.t]
+
+                J_lat = sum(np.power(fp.d_ddd, 2))
+                J_lon = sum(np.power(fp.s_ddd, 2))
+
+                d_diff = (fp.d[-1] - current_state["d"]) ** 2
+
+                v_diff = (target_speed - fp.s_d[-1]) ** 2
+
+                fp.c_lat = J_lat + planning_time + d_diff
+                fp.c_lon = J_lon + planning_time + v_diff
+
+                fp.c_tot = self.K_LAT * fp.c_lat + self.K_LON * fp.c_lon + self.K_Di * abs(fp.d[-1])
+
+                frenet_paths.append(fp)
+
+        frenet_paths = self.calc_global_paths(frenet_paths)
+        frenet_paths = self.check_path(frenet_paths)
+        min_cost = float("inf")
+        opt_traj = None
+        opt_ind = 0
+        _opt_ind = 0
+        for fp in frenet_paths:
+            if min_cost >= fp.c_tot:
+                min_cost = fp.c_tot
+                opt_traj = fp
+                _opt_ind = opt_ind
+            opt_ind += 1
+
+        try:
+            _opt_ind
+        except NameError:
+            print(" No solution ! ")
+
+        # if use FOT speed profile
+        #x,y,yaw,v = opt_traj.x , opt_traj.y, opt_traj.yaw, opt_traj.v
+
+        # if use ramp speed profile
+        ds = opt_traj.s - opt_traj.s[0]
+        v, a = self.velocity_generator.plan(current_state["speed"], target_speed, ds)
+        x,y,yaw = opt_traj.x , opt_traj.y, opt_traj.yaw
+        
+        plot_trajectory(self.trajectory_plot ,opt_traj.t, opt_traj.x, opt_traj.y, v*np.ones((len(opt_traj.x))), a*np.ones((len(opt_traj.x))), opt_traj.j)
+        return x, y, yaw, v
+

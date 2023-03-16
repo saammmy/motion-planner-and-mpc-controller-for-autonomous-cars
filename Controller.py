@@ -7,6 +7,7 @@ import shutil
 import numpy as np
 from scipy.optimize import minimize, differential_evolution
 from matplotlib import pyplot as plt
+from collections import deque
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -65,10 +66,10 @@ plot_traj.set_ylabel("Y")
 class PIDController:
     def __init__(self, vehicle):
         # Set up the PID controller gains
-        self.kp_lat = 1.0
+        self.kp_lat = 0.1
         self.ki_lat = 0.0
         self.kd_lat = 0.0
-        self.kp_long = 1.0
+        self.kp_long = 4
         self.ki_long = 0.0
         self.kd_long = 0.0
 
@@ -79,9 +80,11 @@ class PIDController:
         
         # Store the vehicle and waypoint list
         self.vehicle = vehicle
-        self.current_waypoint_index = 0
+        self.current_waypoint_index = 1
         self.current_state = []
-
+        self.lon_controller = PIDLongitudnalController()
+        self.lat_controller = PIDLateralController()
+        self.target_state = None
 
     def update_trajectory(self, x, y,yaw,velocity):
         self.x = x
@@ -89,26 +92,84 @@ class PIDController:
         self.yaw = yaw
         self.v = velocity
         self.current_waypoint_index = 1
+        self.target_state = (self.x[self.current_waypoint_index], self.y[self.current_waypoint_index], self.yaw[self.current_waypoint_index], self.v[self.current_waypoint_index])
 
 
     def update(self,current_state):
         self.current_state = current_state
+
+        distance_to_waypoint = math.sqrt((self.current_state["x"] - self.target_state[0])**2 + (self.current_state["y"] - self.target_state[1])**2)
+        if distance_to_waypoint < 0.8:
+            self.current_waypoint_index += 1
+
         # target state: x,y,yaw,velocity
-        target_state = (self.x[self.current_waypoint_index], self.y[self.current_waypoint_index], 
+        self.target_state = (self.x[self.current_waypoint_index], self.y[self.current_waypoint_index], 
                             self.yaw[self.current_waypoint_index], self.v[self.current_waypoint_index])
 
-        lateral_error = (self.current_state["y"] - target_state[1]) * math.cos(self.current_state["yaw"]) - (self.current_state["x"] - target_state[0]) * math.sin(self.current_state["yaw"])
-        longitudinal_error = target_state[3] - self.current_state["speed"]
-        distance_to_waypoint = math.sqrt((self.current_state["x"] - target_state[0])**2 + (self.current_state["y"] - target_state[1])**2)
-        if distance_to_waypoint < 0.5:
-            self.current_waypoint_index += 1
-        
-        steering_angle = (self.kp_lat * lateral_error) + (self.ki_lat * lateral_error) + (self.kd_lat * lateral_error)
 
-        throttle = (self.kp_long * longitudinal_error) + (self.ki_long * longitudinal_error) + (self.kd_long * longitudinal_error)
-
-        control = carla.VehicleControl(throttle, steering_angle)
+        throttle = self.lon_controller.pid_control(self.target_state[3], self.current_state["speed"])
+        steer = self.lat_controller.pid_control(self.current_state, [self.target_state[0], self.target_state[1]])
+        control = carla.VehicleControl()
+        control.throttle = throttle
+        control.steer = steer
         self.vehicle.apply_control(control)
+        
+class PIDLongitudnalController():
+    def __init__(self, dt=0.2):
+        self._k_p = 1
+        self._k_d = 0.7
+        self._k_i = 0.7
+        self._dt = dt
+        self._error_buffer = deque(maxlen=10)
+
+    def pid_control(self, target_speed, current_speed):
+        error = target_speed - current_speed
+        self._error_buffer.append(error)
+
+        if len(self._error_buffer) >= 2:
+            _de = (self._error_buffer[-1] - self._error_buffer[-2]) / self._dt
+            _ie = sum(self._error_buffer) * self._dt
+        else:
+            _de = 0.0
+            _ie = 0.0
+        return np.clip((self._k_p * error) + (self._k_d * _de) + (self._k_i * _ie), 0, 1.0)
+
+class PIDLateralController():
+    def __init__(self, dt=0.2):
+        self._k_p = 1
+        self._k_d = 0
+        self._k_i = 0
+        self._dt = dt
+        self._e_buffer = deque(maxlen=10)
+
+    def cross2(self,a:np.ndarray,b:np.ndarray)->np.ndarray:
+        return np.cross(a,b)
+        
+    def pid_control(self, current_state, next_point):
+
+        v_begin = [current_state["x"], current_state["y"]]
+        v_end = [ v_begin[0] + math.cos(current_state["yaw"]), v_begin[1] + math.sin(current_state["yaw"])]
+
+        v_vec = np.array([v_end[0] - v_begin[0], v_end[1] - v_begin[1], 0])
+        w_vec = np.array([ next_point[0] - v_begin[0], next_point[1] - v_begin[1] , 0 ])
+
+        _dot = math.acos(np.clip(np.dot(w_vec,v_vec) /
+                                    (np.linalg.norm(w_vec) * np.linalg.norm(v_vec)), -1.0, 1.0))
+        
+        _cross = self.cross2(v_vec,w_vec)
+
+        if _cross[2] < 0:
+            _dot *= -1.0
+
+        self._e_buffer.append(_dot)
+        if len(self._e_buffer) >= 2:
+            _de = (self._e_buffer[-1] - self._e_buffer[-2]) / self._dt
+            _ie = sum(self._e_buffer) * self._dt
+        else:
+            _de = 0.0
+            _ie = 0.0
+
+        return np.clip((self._k_p * _dot) + (self._k_d * _de) + (self._k_i * _ie), -1.0, 1.0)
 
 class state:
     def __init__(self, X=0, Y=0, YAW=0, V=0, STR=0, BETA=0, CTE=0, EYAW=0):
