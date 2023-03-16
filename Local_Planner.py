@@ -25,9 +25,10 @@ import carla
 class FrenetPath:
 
     def __init__(self):
-        self.T = []
+        self.T = 0
         # time
         self.t = []
+        self.dt = 0
 
         # lateral traj in Frenet frame
         self.d = []
@@ -145,9 +146,9 @@ class LocalPlanner:
         self.world = world
         self.planning_horizon = 20 #meters
         self.planning_duration = 1.6 #seconds
-        self.min_planning_horizon = 0.5 #seconds
+        self.min_planning_horizon = 0.4 #seconds
         self.max_planning_horizon = 2.0 #seconds
-        self.planning_horizon_dt = 0.5 # seconds
+        self.planning_horizon_dt = 0.4 # seconds
         self.dt = 0.2
         self.refrence_path = sp
         self.s = s
@@ -166,11 +167,11 @@ class LocalPlanner:
         self.K_LON = 1.0 
         self.K_Di = 20000
 
-        self.V_MAX = 20
+        self.V_MAX = 60
         self.ACC_MAX = 5
         self.K_MAX = 30
     
-        self.trajectory_plot = plt.subplots(2, 2)
+        # self.trajectory_plot = plt.subplots(2, 2)
     def update_refrence(self,sp,s,x,y, yaw, curvature):
         self.refrence_path = sp
         self.s = s
@@ -358,11 +359,15 @@ class LocalPlanner:
         goal_sets = self.generate_goal_sets(current_state["waypoint"])
         frenet_paths = []
         target_speed = current_state["target_speed"]  
-        target_speed = 5
-
+        target_speed = 25
         for goal in goal_sets:
             for planning_time in np.arange(self.min_planning_horizon, self.max_planning_horizon + self.planning_horizon_dt, self.planning_horizon_dt):
+                if planning_time > 0.8:
+                    self.dt = 0.2
+                else:
+                    self.dt = 0.1
                 fp = FrenetPath()
+                fp.dt = self.dt
                 fp.T = planning_time
                 self.lat_traj_frenet = QuinticPolynomial(current_state["d"],current_state["lat_vel"], current_state["lat_acc"],goal,0,0,planning_time)
 
@@ -391,7 +396,6 @@ class LocalPlanner:
                 fp.c_lon = J_lon + planning_time + v_diff
 
                 fp.c_tot = self.K_LAT * fp.c_lat + self.K_LON * fp.c_lon + self.K_Di * abs(fp.d[-1])
-
                 frenet_paths.append(fp)
 
         frenet_paths = self.calc_global_paths(frenet_paths)
@@ -400,6 +404,7 @@ class LocalPlanner:
         opt_traj = None
         opt_ind = 0
         _opt_ind = 0
+
         for fp in frenet_paths:
             if min_cost >= fp.c_tot:
                 min_cost = fp.c_tot
@@ -420,6 +425,6 @@ class LocalPlanner:
         v, a = self.velocity_generator.plan(current_state["speed"], target_speed, ds)
         x,y,yaw = opt_traj.x , opt_traj.y, opt_traj.yaw
         
-        plot_trajectory(self.trajectory_plot ,opt_traj.t, opt_traj.x, opt_traj.y, v*np.ones((len(opt_traj.x))), a*np.ones((len(opt_traj.x))), opt_traj.j)
-        return x, y, yaw, v
+        # plot_trajectory(self.trajectory_plot ,opt_traj.t, opt_traj.x, opt_traj.y, v*np.ones((len(opt_traj.x))), a*np.ones((len(opt_traj.x))), opt_traj.j)
+        return x, y, yaw, v, opt_traj.dt, opt_traj.T
 

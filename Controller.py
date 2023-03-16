@@ -26,15 +26,15 @@ except IndexError:
 import carla
 
 # Set up the plot
-plt.ion()  # Turn on interactive mode
-fig_1, plot_traj = plt.subplots()
-x_mpc, y_mpc, x_planner, y_planner = [], [], [], []
-xy_mpc, = plot_traj.plot([], [], 'r-', label="MPC")
-xy_planner, = plot_traj.plot([], [], 'b-', label="Motion Planner Trajectory")
-xy_global, = plot_traj.plot([], [], 'k--', label="Global Path")
-plot_traj.legend([xy_mpc, xy_planner, xy_global], [xy_mpc.get_label(), xy_planner.get_label(), xy_global.get_label()], loc=0)
-plot_traj.set_xlabel("X")
-plot_traj.set_ylabel("Y")
+# plt.ion()  # Turn on interactive mode
+# fig_1, plot_traj = plt.subplots()
+# x_mpc, y_mpc, x_planner, y_planner = [], [], [], []
+# xy_mpc, = plot_traj.plot([], [], 'r-', label="MPC")
+# xy_planner, = plot_traj.plot([], [], 'b-', label="Motion Planner Trajectory")
+# xy_global, = plot_traj.plot([], [], 'k--', label="Global Path")
+# plot_traj.legend([xy_mpc, xy_planner, xy_global], [xy_mpc.get_label(), xy_planner.get_label(), xy_global.get_label()], loc=0)
+# plot_traj.set_xlabel("X")
+# plot_traj.set_ylabel("Y")
 
 # fig_2, plot_vel = plt.subplots()
 # v_mpc, v_planner, time_data = [], [], []
@@ -208,8 +208,8 @@ class MPC:
         self.thr_offset = 0.4
         self.thr_bounds = (-2.0, 2.0)
         self.str_bounds = (-1.22, 1.22)
-        self.bounds = (self.thr_bounds,)*self.prediction_horizon + (self.str_bounds,)*self.prediction_horizon
-
+        self.bounds = None
+        
         # Control Inputs
         self.curr_input = inputs()
 
@@ -288,19 +288,19 @@ class MPC:
 
         # print("MPC Future Velocity: ", future_v)
                 
-        x_mpc.append(x)
-        y_mpc.append(y)
-        x_planner.append(desx)
-        y_planner.append(desy)
+        # x_mpc.append(x)
+        # y_mpc.append(y)
+        # x_planner.append(desx)
+        # y_planner.append(desy)
 
-        xy_mpc.set_data(x_mpc, y_mpc)  # Update the line data
-        xy_planner.set_data(x_planner, y_planner)  # Update the line data
-        xy_global.set_data(self.global_x, self.global_y)
-        plot_traj.relim()  # Update the axes limits
-        plot_traj.autoscale_view()  # Autoscale the view
-        plot_traj.set_aspect('equal')
-        fig_1.canvas.draw()  # Redraw the figure
-        fig_1.canvas.flush_events()  # Flush the GUI events
+        # xy_mpc.set_data(x_mpc, y_mpc)  # Update the line data
+        # xy_planner.set_data(x_planner, y_planner)  # Update the line data
+        # xy_global.set_data(self.global_x, self.global_y)
+        # plot_traj.relim()  # Update the axes limits
+        # plot_traj.autoscale_view()  # Autoscale the view
+        # plot_traj.set_aspect('equal')
+        # fig_1.canvas.draw()  # Redraw the figure
+        # fig_1.canvas.flush_events()  # Flush the GUI events
 
         # time_data.append(t)
 
@@ -354,8 +354,11 @@ class MPC:
         self.vehicle_state.cte = cte
         self.vehicle_state.eyaw = eyaw
     
-    def update_waypoints(self, x, y, yaw, v, vehicle_state):
+    def update_waypoints(self, x, y, yaw, v, vehicle_state, dt, planning_time):
         self.update_vehicle_state(vehicle_state["x"], vehicle_state["y"], vehicle_state["yaw"], vehicle_state["speed"], vehicle_state["long_acc"])
+        self.dt = dt
+        self.prediction_horizon = int(planning_time/dt)
+        self.bounds = (self.thr_bounds,)*self.prediction_horizon + (self.str_bounds,)*self.prediction_horizon
 
         self.waypoints = np.zeros(shape=(4, np.shape(x)[0]-1))
         self.waypoints[0,:] = x[1:]
@@ -454,6 +457,8 @@ class MPC:
         self.waypoints_wrt_vehicle = self.global_to_vehicle(self.waypoints)
         
         # Run the minimization
+        print("Sample Time: ", self.dt, "Prediction Horizon: ", self.prediction_horizon, "Planning Time: ", self.prediction_horizon*self.dt)
+        
         control_inputs = [0,0] * self.prediction_horizon
         control_inputs = minimize(self.cost_function, control_inputs, method='SLSQP' , bounds = self.bounds) #L-BFGS-B
         control_inputs = control_inputs.x
