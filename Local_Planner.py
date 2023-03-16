@@ -147,7 +147,7 @@ class LocalPlanner:
         self.planning_horizon = 20 #meters
         self.planning_duration = 1.6 #seconds
         self.min_planning_horizon = 0.4 #seconds
-        self.max_planning_horizon = 2.0 #seconds
+        self.max_planning_horizon = 8.0 #seconds
         self.planning_horizon_dt = 0.4 # seconds
         self.dt = 0.2
         self.refrence_path = sp
@@ -159,16 +159,17 @@ class LocalPlanner:
         self.lon_traj_frenet = None
         self.lon_traj_frenet = None
         self.traj_cartesian = None
-        self.max_acceleration = 2 #m/s2
+        self.max_acceleration = 5 #m/s2
+        self.min_acceleration = -5
         self.target_velocity = None
-        self.velocity_generator = RampGenerator()
+        self.velocity_generator = RampGenerator(max_accel= self.max_acceleration, min_accel = self.min_acceleration)
 
         self.K_LAT = 1.0 
         self.K_LON = 1.0 
         self.K_Di = 20000
 
         self.V_MAX = 60
-        self.ACC_MAX = 5
+        self.ACC_MAX = 10
         self.K_MAX = 30
     
         # self.trajectory_plot = plt.subplots(2, 2)
@@ -321,13 +322,12 @@ class LocalPlanner:
     def check_path(self, fplist):
         ok_ind = []
         for i, _path in enumerate(fplist):
-            acc_squared = [(abs(a_s**2 + a_d**2)) for (a_s, a_d) in zip(_path.s_dd, _path.d_dd)]
             if any([v > self.V_MAX for v in _path.s_d]):  # Max speed check
                 # print("MAX speed EXCESS")
                 continue
-            elif any([acc > self.ACC_MAX**2 for acc in fplist[i].a]):
-                # print("MAX accel EXCESS")
-                continue
+            # elif any([acc > self.ACC_MAX for acc in fplist[i].a]):
+            #     # print("MAX accel EXCESS")
+            #     continue
             elif any([abs(kappa) > self.K_MAX for kappa in fplist[i].kappa]):  # Max curvature check
                 # print("MAX kappa EXCESS")
                 continue
@@ -359,13 +359,16 @@ class LocalPlanner:
         goal_sets = self.generate_goal_sets(current_state["waypoint"])
         frenet_paths = []
         target_speed = current_state["target_speed"]  
-        target_speed = 25
+        target_speed = 30
         for goal in goal_sets:
             for planning_time in np.arange(self.min_planning_horizon, self.max_planning_horizon + self.planning_horizon_dt, self.planning_horizon_dt):
-                if planning_time > 0.8:
+                if planning_time > 1.6:
+                    self.dt = 0.4
+                elif planning_time > 0.8:
                     self.dt = 0.2
                 else:
                     self.dt = 0.1
+
                 fp = FrenetPath()
                 fp.dt = self.dt
                 fp.T = planning_time

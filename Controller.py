@@ -25,7 +25,7 @@ except IndexError:
 
 import carla
 
-# Set up the plot
+# # Set up the plot
 # plt.ion()  # Turn on interactive mode
 # fig_1, plot_traj = plt.subplots()
 # x_mpc, y_mpc, x_planner, y_planner = [], [], [], []
@@ -172,14 +172,16 @@ class PIDLateralController():
         return np.clip((self._k_p * _dot) + (self._k_d * _de) + (self._k_i * _ie), -1.0, 1.0)
 
 class state:
-    def __init__(self, X=0, Y=0, YAW=0, V=0, STR=0, BETA=0, CTE=0, EYAW=0):
+    def __init__(self, X=0, Y=0, YAW=0, V=0, Z=0, STR=0, ACC=0, BETA=0, CTE=0, EYAW=0):
         self.x = X
         self.y = Y
+        self.z = Z
         self.yaw = YAW
         self.beta = BETA
         
         self.v = V
-
+        self.str = STR
+        self.a = ACC
         self.cte = CTE
         self.eyaw = EYAW
 
@@ -203,6 +205,7 @@ class MPC:
         self.dt = dt
         self.prediction_horizon = prediction_horizon
         self.control_horizon = control_horizon
+        self.planning_time = 0
 
         # Control Input Bounds
         self.thr_offset = 0.4
@@ -259,8 +262,8 @@ class MPC:
 
             next_state = self.get_next_state(curr_state, control_inputs[itr], control_inputs[itr+self.prediction_horizon], des_next_state)
             
-            curr_point = carla.Location(x=curr_state.x,y=curr_state.y,z=0.1)
-            next_point = carla.Location(x=next_state.x,y=next_state.y,z=0.1)
+            curr_point = carla.Location(x=curr_state.x,y=curr_state.y,z=self.vehicle_state.z+0.2)
+            next_point = carla.Location(x=next_state.x,y=next_state.y,z=self.vehicle_state.z+0.2)
             
             self.world.debug.draw_arrow(curr_point, next_point, thickness=0.1, arrow_size=0.1, color=carla.Color(255, 0, 0), life_time=0.3)
             curr_state = next_state
@@ -345,19 +348,21 @@ class MPC:
 
         return str_angle, throttle, brake
 
-    def update_vehicle_state(self, x=0, y=0, yaw=0, v=0, a=0, cte=0, eyaw=0):
+    def update_vehicle_state(self, x=0, y=0, yaw=0, v=0, a=0, z=0, cte=0, eyaw=0):
         self.vehicle_state.x = x
         self.vehicle_state.y = y
         self.vehicle_state.yaw = self.convert_angle(yaw)
         self.vehicle_state.v = v
         self.vehicle_state.a = a
+        self.vehicle_state.z = z
         self.vehicle_state.cte = cte
         self.vehicle_state.eyaw = eyaw
     
     def update_waypoints(self, x, y, yaw, v, vehicle_state, dt, planning_time):
-        self.update_vehicle_state(vehicle_state["x"], vehicle_state["y"], vehicle_state["yaw"], vehicle_state["speed"], vehicle_state["long_acc"])
+        self.update_vehicle_state(vehicle_state["x"], vehicle_state["y"], vehicle_state["yaw"], vehicle_state["speed"], vehicle_state["long_acc"], vehicle_state["z"])
         self.dt = dt
-        self.prediction_horizon = int(planning_time/dt)
+        self.planning_time = planning_time
+        self.prediction_horizon = min(int(planning_time/dt),8)
         self.bounds = (self.thr_bounds,)*self.prediction_horizon + (self.str_bounds,)*self.prediction_horizon
 
         self.waypoints = np.zeros(shape=(4, np.shape(x)[0]-1))
@@ -455,9 +460,10 @@ class MPC:
     def run_step(self):
         # Transfer the coordinates from global coordinates to vehicle coordinates
         self.waypoints_wrt_vehicle = self.global_to_vehicle(self.waypoints)
+        print(self.waypoints[3,-1])
         
         # Run the minimization
-        print("Sample Time: ", self.dt, "Prediction Horizon: ", self.prediction_horizon, "Planning Time: ", self.prediction_horizon*self.dt)
+        print("Sample Time: ", self.dt, "Prediction Horizon: ", self.prediction_horizon, "Local Planning Time:", self.planning_time)
         
         control_inputs = [0,0] * self.prediction_horizon
         control_inputs = minimize(self.cost_function, control_inputs, method='SLSQP' , bounds = self.bounds) #L-BFGS-B

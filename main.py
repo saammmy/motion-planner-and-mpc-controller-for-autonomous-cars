@@ -59,6 +59,7 @@ def get_current_states(Ego, local_planner):
     current_state= {
         "x": round(Ego.get_transform().location.x,2),
         "y": round(Ego.get_transform().location.y,2),
+        "z": round(Ego.get_transform().location.z,2),
         "yaw": round(Ego.get_transform().rotation.yaw*pi/180,2),
         "long_vel": round(ego_vel[0],2),
         "lat_vel" : round(ego_vel[1],2),
@@ -173,7 +174,7 @@ if __name__ == "__main__":
 
         x, y, yaw, v, dt, planning_time = local_planner.run_step(current_state) 
         e2 = time.time()
-        draw_trajectory(world, x,y)
+        draw_trajectory(world, x,y, current_state["z"]+0.5)
         e3 = time.time()
         controller.update_waypoints(x, y, yaw, v, current_state, dt, planning_time)
         # print("------")
@@ -183,12 +184,12 @@ if __name__ == "__main__":
         controller.run_step()
         e4 = time.time()
         
-        print("TOTAL TIME: ", e4-s)
-        print("Get State time: ", e1-s)
-        print("Local Planner Time: ", e2-e1)
-        print("Drawing Time: ", e3-e2)
-        print("Controller Time: ", e4-e3)
-        print("---------------------------")
+        # print("TOTAL TIME: ", e4-s)
+        # print("Get State time: ", e1-s)
+        # print("Local Planner Time: ", e2-e1)
+        # print("Drawing Time: ", e3-e2)
+        # print("Controller Time: ", e4-e3)
+        # print("---------------------------")
         
 
 #TODO: Calculate Planning duration based on S 
