@@ -145,11 +145,8 @@ class QuarticPolynomial:
 class LocalPlanner:
     def __init__(self,world,sp,s,x,y, yaw, curvature):
         self.world = world
-        self.planning_horizon = 20 #meters
-        self.planning_duration = 1.6 #seconds
-        self.min_planning_horizon = 0.4 #seconds
-        self.max_planning_horizon = 1.6 #seconds
-        self.planning_horizon_dt = 0.4 # seconds
+        self.planning_time = 1.6 #seconds
+
         self.dt = 0.2
         self.refrence_path = sp
         self.s = s
@@ -160,8 +157,8 @@ class LocalPlanner:
         self.lon_traj_frenet = None
         self.lon_traj_frenet = None
         self.traj_cartesian = None
-        self.max_acceleration = 4 #m/s2
-        self.min_acceleration = -4
+        self.max_acceleration = 5 #m/s2
+        self.min_acceleration = -5
         self.target_velocity = None
         self.velocity_generator = RampGenerator(max_accel= self.max_acceleration, min_accel = self.min_acceleration)
 
@@ -170,7 +167,7 @@ class LocalPlanner:
         self.K_Di = 20000
 
         self.V_MAX = 60
-        self.ACC_MAX = 10
+        self.ACC_MAX = 5 
         self.K_MAX = 30
         self.t = time.time()
     
@@ -321,23 +318,6 @@ class LocalPlanner:
         return fplist
 
 
-    def check_path(self, fplist):
-        ok_ind = []
-        for i, _path in enumerate(fplist):
-            if any([v > self.V_MAX for v in _path.s_d]):  # Max speed check
-                # print("MAX speed EXCESS")
-                continue
-            # elif any([acc > self.ACC_MAX for acc in fplist[i].a]):
-            #     # print("MAX accel EXCESS")
-            #     continue
-            elif any([abs(kappa) > self.K_MAX for kappa in fplist[i].kappa]):  # Max curvature check
-                # print("MAX kappa EXCESS")
-                continue
-
-            ok_ind.append(i)
-
-        return [fplist[i] for i in ok_ind]
-
 
     def generate_goal_sets(self,waypoint):
 
@@ -356,81 +336,50 @@ class LocalPlanner:
         return goal_sets
 
 
-    def run_step(self,current_state):
+    def run_step(self,current_state, target_s, target_d):
 
-        goal_sets = self.generate_goal_sets(current_state["waypoint"])
         frenet_paths = []
         target_speed = current_state["target_speed"]  
-        target_speed = 25
-        if time.time() - self.t >20:
-            print("Target Speed Changed to 15m/s")
-            target_speed = 15
-            if time.time() - self.t >45:
-                print("Target Speed Changed to 7m/s")
-                target_speed = 7
-                if time.time() - self.t >55:
-                    print("Target Speed Changed to 0m/s")
-                    target_speed = 0
-        for goal in goal_sets:
-            for planning_time in np.arange(self.min_planning_horizon, self.max_planning_horizon + self.planning_horizon_dt, self.planning_horizon_dt):
-                if planning_time > 1.6:
-                    self.dt = 0.4
-                elif planning_time > 0.8:
-                    self.dt = 0.2
-                else:
-                    self.dt = 0.1
+        target_speed = 50
 
-                fp = FrenetPath()
-                fp.dt = self.dt
-                fp.T = planning_time
-                self.lat_traj_frenet = QuinticPolynomial(current_state["d"],current_state["lat_vel"], current_state["lat_acc"],goal,0,0,planning_time)
+        fp = FrenetPath()
+        fp.dt = self.dt
+        fp.T = self.planning_time
+        self.lat_traj_frenet = QuinticPolynomial(current_state["d"],current_state["lat_vel"], current_state["lat_acc"],target_d,0,0,self.planning_time)
 
-                fp.t = [t for t in np.arange(0.0, planning_time + self.dt , self.dt)]
-                # print(fp.t)
-                fp.d = [self.lat_traj_frenet.calc_pos(t) for t in fp.t]
-                fp.d_d = [self.lat_traj_frenet.calc_vel(t) for t in fp.t]
-                fp.d_dd = [self.lat_traj_frenet.calc_acc(t) for t in fp.t]
-                fp.d_ddd = [self.lat_traj_frenet.calc_jerk(t) for t in fp.t]
+        fp.t = [t for t in np.arange(0.0, self.planning_time + self.dt , self.dt)]
+        # print(fp.t)
+        fp.d = [self.lat_traj_frenet.calc_pos(t) for t in fp.t]
+        fp.d_d = [self.lat_traj_frenet.calc_vel(t) for t in fp.t]
+        fp.d_dd = [self.lat_traj_frenet.calc_acc(t) for t in fp.t]
+        fp.d_ddd = [self.lat_traj_frenet.calc_jerk(t) for t in fp.t]
 
-                self.lon_traj_frenet = QuarticPolynomial(current_state["s"],current_state["long_vel"], current_state["long_acc"],target_speed,0,planning_time)
+        self.lon_traj_frenet = QuarticPolynomial(current_state["s"],current_state["long_vel"], current_state["long_acc"],target_speed,0,self.planning_time)
 
-                fp.s = [self.lon_traj_frenet.calc_pos(t) for t in fp.t]
-                fp.s_d = [self.lon_traj_frenet.calc_vel(t) for t in fp.t] 
-                fp.s_dd = [self.lon_traj_frenet.calc_acc(t) for t in fp.t]
-                fp.s_ddd = [self.lon_traj_frenet.calc_jerk(t) for t in fp.t]
+        fp.s = [self.lon_traj_frenet.calc_pos(t) for t in fp.t]
+        fp.s_d = [self.lon_traj_frenet.calc_vel(t) for t in fp.t] 
+        fp.s_dd = [self.lon_traj_frenet.calc_acc(t) for t in fp.t]
+        fp.s_ddd = [self.lon_traj_frenet.calc_jerk(t) for t in fp.t]
 
-                J_lat = sum(np.power(fp.d_ddd, 2))
-                J_lon = sum(np.power(fp.s_ddd, 2))
+        J_lat = sum(np.power(fp.d_ddd, 2))
+        J_lon = sum(np.power(fp.s_ddd, 2))
 
-                d_diff = (fp.d[-1] - current_state["d"]) ** 2
+        d_diff = (fp.d[-1] - current_state["d"]) ** 2
 
-                v_diff = (target_speed - fp.s_d[-1]) ** 2
+        v_diff = (target_speed - fp.s_d[-1]) ** 2
 
-                fp.c_lat = J_lat + planning_time + d_diff
-                fp.c_lon = J_lon + planning_time + v_diff
+        fp.c_lat = J_lat + self.planning_time + d_diff
+        fp.c_lon = J_lon + self.planning_time + v_diff
 
-                fp.c_tot = self.K_LAT * fp.c_lat + self.K_LON * fp.c_lon + self.K_Di * abs(fp.d[-1])
-                frenet_paths.append(fp)
+        fp.c_tot = self.K_LAT * fp.c_lat + self.K_LON * fp.c_lon + self.K_Di * abs(fp.d[-1])
+        frenet_paths.append(fp)
 
         frenet_paths = self.calc_global_paths(frenet_paths)
-        frenet_paths = self.check_path(frenet_paths)
-        min_cost = float("inf")
-        opt_traj = None
-        opt_ind = 0
-        _opt_ind = 0
 
-        for fp in frenet_paths:
-            if min_cost >= fp.c_tot:
-                min_cost = fp.c_tot
-                opt_traj = fp
-                _opt_ind = opt_ind
-            opt_ind += 1
+        opt_traj = frenet_paths[0]
 
-        try:
-            _opt_ind
-        except NameError:
-            print(" No solution ! ")
-
+    
+        print(max(np.array(opt_traj.kappa)))
         # if use FOT speed profile
         #x,y,yaw,v = opt_traj.x , opt_traj.y, opt_traj.yaw, opt_traj.v
 

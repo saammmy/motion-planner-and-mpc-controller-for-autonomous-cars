@@ -115,7 +115,7 @@ if __name__ == "__main__":
         start_point_car = carla.Transform(carla.Location(x=189.740814, y=-100.026948, z=0.300000), carla.Rotation(pitch=0.000000, yaw=90, roll=0.000000))
         start_point_route = carla.Transform(carla.Location(x=189.740814, y=-102.026948, z=0.300000), carla.Rotation(pitch=0.000000, yaw=90, roll=0.000000))
 
-    obs = carla.Transform(carla.Location(x= 171, y= 93, z=0.5), carla.Rotation(yaw=270))  
+    obs = carla.Transform(carla.Location(x=189.740814, y=-30.026948, z=0.300000), carla.Rotation(pitch=0.000000, yaw=90, roll=0.000000))  
     end_point = carla.Transform(carla.Location(x=-99.3, y=189, z=0.300000))
 
     #Generate Global Path Waypoints
@@ -144,7 +144,7 @@ if __name__ == "__main__":
     Ego = world.spawn_actor(vehicle_bp,start_point_car)
     actors.append(Ego)
 
-    spawn_obstacles = False
+    spawn_obstacles = True
 
     if spawn_obstacles:
         obs_veh = world.spawn_actor(vehicle_bp,obs)
@@ -237,7 +237,7 @@ if __name__ == "__main__":
             if speed <0.01 and flag == 0:
                 break
         else:
-            state, target_s, target_s_d, target_s_dd = behavior_planner.get_next_behavior(current_state, lookahead_path= 10+ current_state["speed"]*1.6, vehicles=vehicles)
+            state, target_s, target_d = behavior_planner.get_next_behavior(current_state, lookahead_path= 10 + current_state["speed"]*3, vehicles=vehicles)
             # print("EGo Speed: ", current_state["speed"])
             # print("Current State", state)
             if state == "SAFETY_STOP":
@@ -245,7 +245,7 @@ if __name__ == "__main__":
                 Ego.apply_control((carla.VehicleControl(throttle=0, brake=1)))
                 continue
 
-            x, y, yaw, v, dt, planning_time = local_planner.run_step(current_state) 
+            x, y, yaw, v, dt, planning_time = local_planner.run_step(current_state, target_s, target_d) 
             e2 = time.time()
             draw_trajectory(world, x,y, current_state["z"]+0.5)
             e3 = time.time()

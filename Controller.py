@@ -492,7 +492,7 @@ class MPC:
     def get_costs(self,curr_state, next_state, control_inputs, itr):
         cost_cte = self.w_cte*(next_state.cte)
         cost_eyaw = self.w_eyaw*(next_state.eyaw)
-        cost_vel = self.w_vel * (next_state.v - self.waypoints[3,itr])**2 #Checking with final value
+        cost_vel = self.w_vel * (next_state.v - self.waypoints[3,-1])**2 #Checking with final value
         cost_thr = self.w_thr*(control_inputs[itr])**2
         cost_str = self.w_str*(control_inputs[itr+self.prediction_horizon])**2
         cost_dvel = self.w_dvel*(next_state.v - curr_state.v)**2
