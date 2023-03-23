@@ -193,25 +193,44 @@ class inputs:
 
 class MPC:
     def __init__(self, vehicle, world, global_x, global_y, dt = 0.2, prediction_horizon = 8, control_horizon = 1):
-        self.w_cte = 0.05
-        self.w_eyaw = 60.0
-        self.w_dthr = 2500.0
-        self.w_dstr = 1000.0
-        self.w_thr = 1.0
-        self.w_str = 1.0
-        self.w_vel = 5.0
-        self.w_dvel = 200.0
+        self.w_cte = 0.05 #0.05
+        self.w_eyaw = 60.0 #60.0
+        self.w_dthr = 2500 #2500.0
+        self.w_dstr = 1000 #1000.0
+        self.w_thr = 1.0 #1.0
+        self.w_str = 1.0 #1.0
+        self.w_vel = 5.0 #5.0  
+        self.w_dvel = 200.0 #200.0
 
         self.dt = dt
         self.prediction_horizon = prediction_horizon
         self.control_horizon = control_horizon
         self.planning_time = 0
+        self.method = "graph_tracking"
+        if self.method =="throttle_offset":
+            self.thr_offset = 0.75
+        elif self.method == "pid_control":
+            self._k_p = 0.27
+            self._k_d = 0.01
+            self._k_i = 0.15
+        elif self.method == "pure_pid":
+            self._k_p = 1
+            self._k_d = 0.7
+            self._k_i = 0.7
+        elif self.method == "graph_tracking":
+            self.poly_dict = np.load("./data/poly3_dict.npy", allow_pickle='TRUE').item()
+
+        
+        self._dt = dt
+        self._error_buffer = deque(maxlen=10)
 
         # Control Input Bounds
-        self.thr_offset = 0.4
-        self.thr_bounds = (-2.0, 2.0)
+        self.thr_bounds = (-5.0, 5.0)
         self.str_bounds = (-1.22, 1.22)
         self.bounds = None
+        self.throttle = 0
+        self.steering_angle = 0
+        self.brake = 0
         
         # Control Inputs
         self.curr_input = inputs()
@@ -280,7 +299,6 @@ class MPC:
                 str = control_inputs[itr+self.prediction_horizon]
                 acc = control_inputs[itr]
             future_v.append(next_state.v)
-
         self.graph_creator.add_scalar("Steering Angle (Degree)",str*180/np.pi, global_step=t)
         self.graph_creator.add_scalars("Velocity (mph)",{"Velocity Predicted by MPC":v*2.24, "Velocity Proposed by Local Planner":desv*2.24, "Current Velocity in CARLA":self.vehicle_state.v*2.24},global_step=t)
         self.graph_creator.add_scalars("Acceleration",{"Acceleration Predicted by MPC":acc, "Carla Acceleration":realacc}, global_step=t)
@@ -332,21 +350,74 @@ class MPC:
         # fig_4.canvas.draw()  # Redraw the figure
         # fig_4.canvas.flush_events()  # Flush the GUI events
 
-    def convert_input_to_carla(self, str_angle, acceleration):
-        str_angle = str_angle / self.str_bounds[1]
-        acc_maped = acceleration / self.thr_bounds[1]
+    def convert_input_to_carla(self, str_angle, target_acc):
+        self.steering_angle = str_angle / self.str_bounds[1]
+        acc_maped = target_acc / self.thr_bounds[1]
 
-        if acc_maped >= 0:
-            throttle = min(acc_maped + self.thr_offset,1)
-            brake = 0
-        elif acc_maped < 0 and acc_maped > -self.thr_offset:
-            throttle = 0
-            brake = 0
-        else:
-            throttle = 0
-            brake = min(abs(acc_maped),1)
+        if self.method == "throttle_offset":
+            if acc_maped >= 0:
+                self.throttle = min(acc_maped + self.thr_offset,1)
+                self.brake = 0
+            elif acc_maped < 0 and acc_maped > -self.thr_offset:
+                self.throttle = 0
+                self.brake = 0
+            else:
+                self.throttle = 0
+                self.brake = min(abs(acc_maped),1)
 
-        return str_angle, throttle, brake
+        elif self.method == "pid_control":
+            print("Target Acc", target_acc)
+            print("Curr Acceleration", self.vehicle_state.a)
+            error = target_acc - min(self.vehicle_state.a,10)
+            self._error_buffer.append(error)
+
+            if len(self._error_buffer) >= 2:
+                _de = (self._error_buffer[-1] - self._error_buffer[-2]) / self._dt
+                _ie = sum(self._error_buffer) * self._dt
+            else:
+                _de = 0.0
+                _ie = 0.0
+
+            self.throttle = np.clip((self._k_p * error) + (self._k_d * _de) + (self._k_i * _ie), 0, 1.0)
+            print("Throttle: ", throttle)
+        
+        elif self.method == "pure_pid":
+            error = 30 - self.vehicle_state.v
+            self._error_buffer.append(error)
+
+            if len(self._error_buffer) >= 2:
+                _de = (self._error_buffer[-1] - self._error_buffer[-2]) / self._dt
+                _ie = sum(self._error_buffer) * self._dt
+            else:
+                _de = 0.0
+                _ie = 0.0
+
+            self.throttle = np.clip((self._k_p * error) + (self._k_d * _de) + (self._k_i * _ie), 0, 1.0)
+            print("Throttle: ", throttle)
+        
+        elif self.method == "graph_tracking":
+            delta_min = float('inf')
+            throttle = 0.0
+            target_vel = self.vehicle_state.v + target_acc * self.dt
+            
+            if self.waypoints[3,-1] < 0.5:
+                # print("I am here")
+                # self.throttle -= 0.05
+                # if self.throttle <= 0:
+                self.brake += 0.1
+                self.brake = min(self.brake,1)
+                self.throttle = 0
+                self.steering_angle = 0
+            else:
+                for key in self.poly_dict:
+                    poly = self.poly_dict[key]
+                    acc = np.polyval(poly, target_vel)
+                    delta = np.abs(acc - target_acc)
+                    if delta<delta_min:
+                        delta_min = delta
+                        throttle = key
+                self.throttle = min(self.throttle+0.1, throttle)
+                self.brake = 0
 
     def update_vehicle_state(self, x=0, y=0, yaw=0, v=0, a=0, z=0, cte=0, eyaw=0):
         self.vehicle_state.x = x
@@ -460,10 +531,10 @@ class MPC:
     def run_step(self):
         # Transfer the coordinates from global coordinates to vehicle coordinates
         self.waypoints_wrt_vehicle = self.global_to_vehicle(self.waypoints)
-        print(self.waypoints[3,-1])
+        # print(self.waypoints[3,-1])
         
         # Run the minimization
-        print("Sample Time: ", self.dt, "Prediction Horizon: ", self.prediction_horizon, "Local Planning Time:", self.planning_time)
+        # print("Sample Time: ", self.dt, "Prediction Horizon: ", self.prediction_horizon, "Local Planning Time:", self.planning_time)
         
         control_inputs = [0,0] * self.prediction_horizon
         control_inputs = minimize(self.cost_function, control_inputs, method='SLSQP' , bounds = self.bounds) #L-BFGS-B
@@ -473,16 +544,9 @@ class MPC:
 
         for i in range(self.control_horizon):
             s = time.time()
-            # if control_inputs[i] >= 0:
-            #     acceleration = control_inputs[i]
-            #     deacceleration = 0
-            # else:
-            #     acceleration = 0
-            #     deacceleration = 0 #control_inputs[i]
-            # steering_angle = control_inputs[i+self.prediction_horizon]
-            steering_angle, throttle, brake = self.convert_input_to_carla(control_inputs[i+self.prediction_horizon], control_inputs[i])
+            self.convert_input_to_carla(control_inputs[i+self.prediction_horizon], control_inputs[i])
             if self.mpc_plot:
-                self.plot_traj_carla(control_inputs, throttle, steering_angle, brake)
+                self.plot_traj_carla(control_inputs, self.throttle, self.steering_angle, self.brake)
                 # print("Local Planner Future Velocities: ", self.waypoints[3,:])
                 plt.show()
             # print("Waypoints: ", self.waypoints)
@@ -492,7 +556,7 @@ class MPC:
             # print("Steering: ", steering_angle)
             # print("Brake: ", brake)
 
-            control = carla.VehicleControl(throttle, steering_angle, brake)
+            control = carla.VehicleControl(self.throttle, self.steering_angle, self.brake)
             self.vehicle.apply_control(control)
         
             

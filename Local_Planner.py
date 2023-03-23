@@ -4,6 +4,7 @@ from matplotlib import pyplot as plt
 import glob
 import sys
 import os
+import time
 from plotter import *
 
 from velocity_generator.ramp_profile import *
@@ -147,7 +148,7 @@ class LocalPlanner:
         self.planning_horizon = 20 #meters
         self.planning_duration = 1.6 #seconds
         self.min_planning_horizon = 0.4 #seconds
-        self.max_planning_horizon = 8.0 #seconds
+        self.max_planning_horizon = 1.6 #seconds
         self.planning_horizon_dt = 0.4 # seconds
         self.dt = 0.2
         self.refrence_path = sp
@@ -159,8 +160,8 @@ class LocalPlanner:
         self.lon_traj_frenet = None
         self.lon_traj_frenet = None
         self.traj_cartesian = None
-        self.max_acceleration = 5 #m/s2
-        self.min_acceleration = -5
+        self.max_acceleration = 4 #m/s2
+        self.min_acceleration = -4
         self.target_velocity = None
         self.velocity_generator = RampGenerator(max_accel= self.max_acceleration, min_accel = self.min_acceleration)
 
@@ -171,6 +172,7 @@ class LocalPlanner:
         self.V_MAX = 60
         self.ACC_MAX = 10
         self.K_MAX = 30
+        self.t = time.time()
     
         # self.trajectory_plot = plt.subplots(2, 2)
     def update_refrence(self,sp,s,x,y, yaw, curvature):
@@ -359,7 +361,16 @@ class LocalPlanner:
         goal_sets = self.generate_goal_sets(current_state["waypoint"])
         frenet_paths = []
         target_speed = current_state["target_speed"]  
-        target_speed = 30
+        target_speed = 25
+        if time.time() - self.t >20:
+            print("Target Speed Changed to 15m/s")
+            target_speed = 15
+            if time.time() - self.t >45:
+                print("Target Speed Changed to 7m/s")
+                target_speed = 7
+                if time.time() - self.t >55:
+                    print("Target Speed Changed to 0m/s")
+                    target_speed = 0
         for goal in goal_sets:
             for planning_time in np.arange(self.min_planning_horizon, self.max_planning_horizon + self.planning_horizon_dt, self.planning_horizon_dt):
                 if planning_time > 1.6:

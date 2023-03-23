@@ -8,8 +8,11 @@ from math import *
 from spline import Spline2D
 from matplotlib import pyplot as plt
 import numpy as np
+from numpy import savetxt
 import time
 from Controller import MPC
+from scipy.optimize import curve_fit
+
 try:
     sys.path.append(glob.glob('../carla/dist/carla-*%d.%d-%s.egg' % (
         sys.version_info.major,
@@ -94,6 +97,7 @@ def find_junction(waypoints_,world):
     return junction
 if __name__ == "__main__":
 
+    test = False
 
     # Setup CARLA Simualtor
     client = carla.Client('localhost',2000)
@@ -101,17 +105,18 @@ if __name__ == "__main__":
     world = client.load_world('Town05')
     actors = []
 
-
     # Get start and end points
     spawn_points = world.get_map().get_spawn_points()
-    start_point_car = carla.Transform(carla.Location(x=189.740814, y=-90.026948, z=0.300000), carla.Rotation(pitch=0.000000, yaw=90, roll=0.000000))
-    start_point_route = carla.Transform(carla.Location(x=189.740814, y=-100.026948, z=0.300000), carla.Rotation(pitch=0.000000, yaw=90, roll=0.000000))
-    # obs = carla.Transform(carla.Location(x=-10, y=70.80, z=0.5), carla.Rotation(yaw=90))
-    obs = carla.Transform(carla.Location(x= 171, y= 93, z=0.5), carla.Rotation(yaw=270))
-    # end_point = carla.Transform(carla.Location(x=-105, y=132, z=0.5))
-    # end_point = carla.Transform(carla.Location(x=210, y=63, z=0.5))
+
+    if test == True:
+        start_point_car = carla.Transform(carla.Location(x=625, y=-16.0, z=0.300000), carla.Rotation(pitch=0.000000, yaw=180, roll=0.000000))
+        start_point_route = carla.Transform(carla.Location(x=625, y=-16.0, z=0.300000), carla.Rotation(pitch=0.000000, yaw=180, roll=0.000000))
+    else:
+        start_point_car = carla.Transform(carla.Location(x=189.740814, y=-100.026948, z=0.300000), carla.Rotation(pitch=0.000000, yaw=90, roll=0.000000))
+        start_point_route = carla.Transform(carla.Location(x=189.740814, y=-102.026948, z=0.300000), carla.Rotation(pitch=0.000000, yaw=90, roll=0.000000))
+
+    obs = carla.Transform(carla.Location(x= 171, y= 93, z=0.5), carla.Rotation(yaw=270))  
     end_point = carla.Transform(carla.Location(x=-99.3, y=189, z=0.300000))
-    # end_point = random.choice(spawn_points)    
 
     #Generate Global Path Waypoints
     dao = GlobalRoutePlannerDAO(world.get_map(), 3)   
@@ -145,6 +150,7 @@ if __name__ == "__main__":
         obs_veh = world.spawn_actor(vehicle_bp,obs)
         actors.append(obs_veh)
         vehicles.append(obs_veh)
+
     target_velocity = carla.Vector3D(x=0, y=4, z=0)
 
 
@@ -156,45 +162,173 @@ if __name__ == "__main__":
     local_planner = LocalPlanner(world,sp,s,rx,ry,ryaw,rk)
     behavior_planner = BehaviorPlanner(local_planner)
     controller = MPC(Ego, world, global_x, global_y)
+    
+    time.sleep(1)
 
-    time.sleep(5)
+    if test == True:
+        flag = 1
+        speed_list_all = []
+        acc_list_all = []
+        time_list_all = []
+
+        speed_list_acc = []
+        acc_list = []
+        time_list_acc = []
+        
+        speed_list_dec = []
+        dec_list = []
+        time_list_dec = []
+        
+        total_acc_list = []
+        
+        prev_speed = 0
+        t = 0
+
+        throttle = 0.05
+        brake = 0
+        steering = 0
+        path = "./data/"+ str(throttle)
+        if not os.path.exists(path):
+            os.makedirs(path)
+
+        s1 = s2 = time.time()
+    
     # obs_veh.set_target_velocity(target_velocity)
     while  not reached_goal:
         s = time.time()
         current_state = get_current_states(Ego, local_planner)
         e1 = time.time()
-        # TODO: Calculate lookahead distance based on velocity
-        #state, target_s, target_s_d, target_s_dd = behavior_planner.get_next_behavior(current_state, lookahead_path= 10+ current_state["speed"]*1.6, vehicles=vehicles)
-        # print("EGo Speed: ", current_state["speed"])
-        # print("Current State", state)
-        # if state == "SAFETY_STOP":
-        #      print("Applying Emergency Brake")
-        #      Ego.apply_control((carla.VehicleControl(throttle=0, brake=1)))
-        #      continue
+        
+        if test == True:
+            Ego.apply_control(carla.VehicleControl(throttle, steering, brake))
+            e1 = time.time()
+            speed = current_state["speed"]
+            acc = current_state["long_acc"]
+            # total_acc = current_state["total_acc"]
 
-        x, y, yaw, v, dt, planning_time = local_planner.run_step(current_state) 
-        e2 = time.time()
-        draw_trajectory(world, x,y, current_state["z"]+0.5)
-        e3 = time.time()
-        controller.update_waypoints(x, y, yaw, v, current_state, dt, planning_time)
-        # print("------")
-        # print("Current Velocity for Local planner", v[0])
-        # print("Current Velocity of vehicle", current_state["speed"])
-        # print("CUrrent Acceleration of Ego: ", current_state["long_acc"])
-        controller.run_step()
-        e4 = time.time()
-        
-        # print("TOTAL TIME: ", e4-s)
-        # print("Get State time: ", e1-s)
-        # print("Local Planner Time: ", e2-e1)
-        # print("Drawing Time: ", e3-e2)
-        # print("Controller Time: ", e4-e3)
-        # print("---------------------------")
-        
+            if (speed > 38 or (abs(prev_speed - speed) < 0.01 and t>10)) and flag:
+                print("Decelerating Now")
+                flag = 0
+                throttle = 0.0
+                brake = 0.0
+                steering = 0.0
+                Ego.apply_control(carla.VehicleControl(throttle, steering, brake))
+                s2 = time.time()
+                e1 = time.time()
+            
+            t = round(e1 - s2, 2)
+            
+            if flag == 1:
+                speed_list_acc.append(speed)
+                acc_list.append(acc)
+                # total_acc_list.append(total_acc)
+                time_list_acc.append(t)
+            else:
+                speed_list_dec.append(speed)
+                dec_list.append(acc)
+                time_list_dec.append(t)
+            
+            speed_list_all.append(speed)
+            acc_list_all.append(acc)
+            time_list_all.append(e1-s1)
+
+            prev_speed = current_state["speed"]
+            
+            if speed <0.01 and flag == 0:
+                break
+        else:
+            state, target_s, target_s_d, target_s_dd = behavior_planner.get_next_behavior(current_state, lookahead_path= 10+ current_state["speed"]*1.6, vehicles=vehicles)
+            # print("EGo Speed: ", current_state["speed"])
+            # print("Current State", state)
+            if state == "SAFETY_STOP":
+                print("Applying Emergency Brake")
+                Ego.apply_control((carla.VehicleControl(throttle=0, brake=1)))
+                continue
+
+            x, y, yaw, v, dt, planning_time = local_planner.run_step(current_state) 
+            e2 = time.time()
+            draw_trajectory(world, x,y, current_state["z"]+0.5)
+            e3 = time.time()
+            controller.update_waypoints(x, y, yaw, v, current_state, dt, planning_time)
+            print("------")
+            # print("Current Velocity for Local planner", v[0])
+            print("Current Velocity of vehicle", current_state["speed"])
+            print("CUrrent Acceleration of Ego: ", current_state["long_acc"])
+            controller.run_step()
+            e4 = time.time()
+            
+            # print("TOTAL TIME: ", e4-s)
+            # print("Get State time: ", e1-s)
+            # print("Local Planner Time: ", e2-e1)
+            # print("Drawing Time: ", e3-e2)
+            # print("Controller Time: ", e4-e3)
+            # print("---------------------------")
+
+if test == True:
+
+    np.savetxt(path + "/speed_list_acc.csv", np.array(speed_list_acc))
+    np.savetxt(path + "/acc_list.csv", np.array(acc_list))
+    np.savetxt(path + "/speed_list_dec.csv", np.array(speed_list_dec))
+    np.savetxt(path + "/dec_list.csv", np.array(dec_list))
+
+    # Full Profile
+    plt.figure()
+    plt.plot(time_list_all, speed_list_all)
+    plt.title("Time vs Velcoity full test")
+    plt.xlabel("Time (s)")
+    plt.ylabel("Velocity (m/s)")
+
+    plt.figure()
+    plt.plot(time_list_all, acc_list_all)
+    plt.title("Time vs Acceleration full test")
+    plt.xlabel("Time (s)")
+    plt.ylabel("Acceleration (m/s2)")
+
+    # Accelerate
+    # plt.figure()
+    # plt.plot(time_list_acc, speed_list_acc)
+    # plt.title("Time vs Velcoity when Accelerating")
+    # plt.xlabel("Time (s)")
+    # plt.ylabel("Velocity (m/s)")
+    # plt.figure()
+    # plt.plot(time_list_acc, acc_list)
+    # plt.title("Time vs Acceleration when Accelerating")
+    # plt.xlabel("Time (s)")
+    # plt.ylabel("Acceleration (m/s2)")
+    plt.figure()
+    plt.plot(speed_list_acc, acc_list)
+    plt.title("Velocity vs Acceleration when Accelerating")
+    plt.xlabel("Velocity (m/s)")
+    plt.ylabel("Acceleration (m/s2)")
+
+    # Decelerate
+    # plt.figure()
+    # plt.plot(time_list_dec, speed_list_dec)
+    # plt.title("Time vs Velcoity when Decelerating")
+    # plt.xlabel("Time (s)")
+    # plt.ylabel("Velocity (m/s)")
+    # plt.figure()
+    # plt.plot(time_list_dec, dec_list)
+    # plt.title("Time vs Acceleration when Decelerating")
+    # plt.xlabel("Time (s)")
+    # plt.ylabel("Acceleration (m/s2)")
+
+    plt.figure()
+    plt.plot(speed_list_dec, dec_list)
+    plt.title("Velocity vs Acceleration when Decelerating")
+    plt.xlabel("Velocity (m/s)")
+    plt.ylabel("Acceleration (m/s2)")
+
+    # plt.figure()
+    # plt.plot(time_list_acc, total_acc_list)
+    # plt.plot(time_list_acc, acc_list)
+    # plt.title("Total Acc vs Long Acc")
+
+    plt.show()
 
 #TODO: Calculate Planning duration based on S 
 
-    # s = time.time()
+    # s = time.time()a
     # while time.time() - s < 5:
     #      Ego.apply_control(carla.VehicleControl(1, 0, 0))
     #      state = get_current_states(Ego,None)
