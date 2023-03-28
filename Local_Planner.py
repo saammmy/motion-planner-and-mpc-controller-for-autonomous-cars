@@ -6,6 +6,7 @@ import sys
 import os
 import time
 from plotter import *
+from utils import *
 
 from velocity_generator.ramp_profile import *
 try:
@@ -336,12 +337,25 @@ class LocalPlanner:
         return goal_sets
 
 
-    def run_step(self,current_state, target_s, target_d):
+    def run_step(self,current_state, target_s, target_d, behavior):
 
         frenet_paths = []
-        target_speed = current_state["target_speed"]  
-        target_speed = 50
+        target_speed = current_state["target_speed"]
 
+        curr_speed = current_state["speed"]
+
+        req_accel = (target_speed - curr_speed)/self.planning_time
+
+        if req_accel > self.max_acceleration:
+            print("Breaching maximum acceleation limits")
+            req_accel = self.max_acceleration
+
+        if req_accel < self.min_acceleration:
+            print("Breaching minimum acceleation limits")
+            req_accel = self.min_acceleration
+
+        achievable_speed = curr_speed + req_accel*self.planning_time
+        
         fp = FrenetPath()
         fp.dt = self.dt
         fp.T = self.planning_time
@@ -354,40 +368,48 @@ class LocalPlanner:
         fp.d_dd = [self.lat_traj_frenet.calc_acc(t) for t in fp.t]
         fp.d_ddd = [self.lat_traj_frenet.calc_jerk(t) for t in fp.t]
 
-        self.lon_traj_frenet = QuarticPolynomial(current_state["s"],current_state["long_vel"], current_state["long_acc"],target_speed,0,self.planning_time)
+        self.lon_traj_frenet = QuarticPolynomial(current_state["s"],current_state["long_vel"], current_state["long_acc"],achievable_speed,0,self.planning_time)
 
         fp.s = [self.lon_traj_frenet.calc_pos(t) for t in fp.t]
         fp.s_d = [self.lon_traj_frenet.calc_vel(t) for t in fp.t] 
         fp.s_dd = [self.lon_traj_frenet.calc_acc(t) for t in fp.t]
         fp.s_ddd = [self.lon_traj_frenet.calc_jerk(t) for t in fp.t]
 
-        J_lat = sum(np.power(fp.d_ddd, 2))
-        J_lon = sum(np.power(fp.s_ddd, 2))
-
-        d_diff = (fp.d[-1] - current_state["d"]) ** 2
-
-        v_diff = (target_speed - fp.s_d[-1]) ** 2
-
-        fp.c_lat = J_lat + self.planning_time + d_diff
-        fp.c_lon = J_lon + self.planning_time + v_diff
-
-        fp.c_tot = self.K_LAT * fp.c_lat + self.K_LON * fp.c_lon + self.K_Di * abs(fp.d[-1])
         frenet_paths.append(fp)
 
         frenet_paths = self.calc_global_paths(frenet_paths)
 
         opt_traj = frenet_paths[0]
 
-    
-        print(max(np.array(opt_traj.kappa)))
+        superelevation = 6
+        radius_feet = m_to_feet(1/max(np.array(opt_traj.kappa)))
+        
+        if behavior!="lane_change":
+            if achievable_speed < mph_to_ms(50):
+                curvature_speed = 0.5*(-0.015*radius_feet+((.015*radius_feet)**2 + 4*radius_feet*((15*superelevation/100) + 2.85))**(1/2)) * 0.44704
+            else:
+                curvature_speed = 0.5*(-0.03*radius_feet+((.03*radius_feet)**2 + 4*radius_feet*((15*superelevation/100) + 3.6))**(1/2)) * 0.44704
+        else:
+            curvature_speed = target_speed
+        
+        # curvature_speed = 200
+        
+        print("Target Speed set by Behavior Planner: ",ms_to_mph(target_speed))
+        print("Achievable Target Speed set by Behavior Planner: ", ms_to_mph(achievable_speed))
+        print("Speed limit due to Curvature: ",  ms_to_mph(curvature_speed))
+        
+        final_speed = min(achievable_speed, curvature_speed, target_speed)
+
+        print("Final Speed: ",ms_to_mph(final_speed))
+
         # if use FOT speed profile
         #x,y,yaw,v = opt_traj.x , opt_traj.y, opt_traj.yaw, opt_traj.v
 
         # if use ramp speed profile
         ds = opt_traj.s - opt_traj.s[0]
-        v, a = self.velocity_generator.plan(current_state["speed"], target_speed, ds)
+        v, a = self.velocity_generator.plan(current_state["speed"], final_speed, ds)
         x,y,yaw = opt_traj.x , opt_traj.y, opt_traj.yaw
         
         # plot_trajectory(self.trajectory_plot ,opt_traj.t, opt_traj.x, opt_traj.y, v*np.ones((len(opt_traj.x))), a*np.ones((len(opt_traj.x))), opt_traj.j)
-        return x, y, yaw, v, opt_traj.dt, opt_traj.T
+        return x, y, yaw, v, opt_traj.dt, opt_traj.T, final_speed
 

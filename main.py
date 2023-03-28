@@ -12,6 +12,7 @@ from numpy import savetxt
 import time
 from Controller import MPC
 from scipy.optimize import curve_fit
+from utils import *
 
 try:
     sys.path.append(glob.glob('../carla/dist/carla-*%d.%d-%s.egg' % (
@@ -120,8 +121,8 @@ if __name__ == "__main__":
     # obs = carla.Transform(carla.Location(x=189.740814, y=-90.026948, z=0.300000), carla.Rotation(pitch=0.000000, yaw=90, roll=0.000000)) # For Town 5
     obs = carla.Transform(carla.Location(x=100.0, y=188, z=0.300000), carla.Rotation(pitch=0.000000, yaw=180, roll=0.000000)) # For Town 5
     # obs = carla.Transform(carla.Location(x=525, y=-17.5, z=0.300000), carla.Rotation(pitch=0.000000, yaw=180, roll=0.000000))
-    end_point = carla.Transform(carla.Location(x=-99.3, y=189, z=0.300000)) # Town 5
-    # end_point = carla.Transform(carla.Location(x=-0, y=-17.5, z=0.300000)) # Town 6
+    # end_point = carla.Transform(carla.Location(x=-99.3, y=189, z=0.300000)) # Town 5
+    end_point = carla.Transform(carla.Location(x=-0, y=-17.5, z=0.300000)) # Town 6
 
     #Generate Global Path Waypoints
     dao = GlobalRoutePlannerDAO(world.get_map(), 3)   
@@ -260,7 +261,7 @@ if __name__ == "__main__":
             controller.update_waypoints(x, y, yaw, v, current_state, dt, planning_time, final_speed)
             print("------")
             # print("Current Velocity for Local planner", v[0])
-            print("Current Velocity of vehicle", current_state["speed"]*2.24)
+            print("Current Velocity of vehicle", ms_to_mph(current_state["speed"]))
             print("CUrrent Acceleration of Ego: ", current_state["long_acc"])
             # print("X: ", current_state["x"])
             # print("Y: ", current_state["y"])

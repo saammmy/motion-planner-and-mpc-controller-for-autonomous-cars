@@ -8,6 +8,7 @@ import numpy as np
 from scipy.optimize import minimize, differential_evolution
 from matplotlib import pyplot as plt
 from collections import deque
+from utils import *
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -233,23 +234,6 @@ class MPC:
             shutil.rmtree(self.log_graph_path + "/", ignore_errors=True)
         self.graph_creator = SummaryWriter(self.log_graph_path)
         self.start_time = round(time.time(),2)
-    
-    def ms_to_mph(self, speed):
-        return speed * 2.24
-    
-    def mph_to_ms(self, speed):
-        return speed/2.24
-
-    def convert_angle(self, angle):
-        angle = np.asarray(angle)
-        return np.where(angle<0, 2*np.pi+angle, angle)
-    
-    def normalize_angle(self, angle):
-        return angle % (2 * np.pi)
-
-    def angle_diff(self, a, b):
-        diff = abs(a-b) % (2 * np.pi)
-        return 2 * np.pi - diff if diff > np.pi else diff
 
     def plot_traj_carla(self, control_inputs):
         curr_state = self.vehicle_state
@@ -279,7 +263,7 @@ class MPC:
                 acc = control_inputs[itr]
             future_v.append(next_state.v)
         self.graph_creator.add_scalar("Steering Angle (Degree)",str*180/np.pi, global_step=t)
-        self.graph_creator.add_scalars("Velocity (mph)",{"Velocity Predicted by MPC": self.ms_to_mph(v), "Velocity Proposed by Local Planner": self.ms_to_mph(desv), "Current Velocity in CARLA": self.ms_to_mph(self.vehicle_state.v), "Final Goal Speed": self.ms_to_mph(self.final_speed)},global_step=t)
+        self.graph_creator.add_scalars("Velocity (mph)",{"Velocity Predicted by MPC": ms_to_mph(v), "Velocity Proposed by Local Planner": ms_to_mph(desv), "Current Velocity in CARLA": ms_to_mph(self.vehicle_state.v), "Final Goal Speed": ms_to_mph(self.final_speed)},global_step=t)
         self.graph_creator.add_scalars("Acceleration",{"Acceleration Predicted by MPC":self.prev_pred_acc, "Carla Acceleration":realacc}, global_step=t)
         self.graph_creator.add_scalar("Steering Input to Carla",self.steering_angle, global_step=t)
         self.graph_creator.add_scalar("Throttle Input to Carla",self.throttle, global_step=t)
@@ -356,7 +340,7 @@ class MPC:
     def update_vehicle_state(self, x=0, y=0, yaw=0, v=0, a=0, z=0, cte=0, eyaw=0):
         self.vehicle_state.x = x
         self.vehicle_state.y = y
-        self.vehicle_state.yaw = self.convert_angle(yaw)
+        self.vehicle_state.yaw = convert_angle(yaw)
         self.vehicle_state.v = v
         self.vehicle_state.a = a
         self.vehicle_state.z = z
@@ -373,7 +357,7 @@ class MPC:
         self.waypoints = np.zeros(shape=(4, np.shape(x)[0]-1))
         self.waypoints[0,:] = x[1:]
         self.waypoints[1,:] = y[1:]
-        self.waypoints[2,:] = self.convert_angle(yaw[1:])
+        self.waypoints[2,:] = convert_angle(yaw[1:])
         self.waypoints[3,:] = v[1:]        
         
         self.final_speed = final_speed
@@ -407,12 +391,12 @@ class MPC:
         next_state = state()
         next_state.x = curr_state.x + curr_state.v*np.cos(curr_state.yaw + curr_state.beta)*self.dt
         next_state.y = curr_state.y + curr_state.v*np.sin(curr_state.yaw + curr_state.beta)*self.dt
-        next_state.beta = self.normalize_angle(np.arctan((self.lr/self.length)*np.tan(control_input.str_angle)))
-        next_state.yaw = self.normalize_angle(curr_state.yaw + curr_state.v/self.lr * np.sin(next_state.beta)*self.dt)
+        next_state.beta = normalize_angle(np.arctan((self.lr/self.length)*np.tan(control_input.str_angle)))
+        next_state.yaw = normalize_angle(curr_state.yaw + curr_state.v/self.lr * np.sin(next_state.beta)*self.dt)
         next_state.v = curr_state.v + control_input.acc*self.dt
         
         next_state.cte = (next_state.x - des_next_state.x)**2 + (next_state.y - des_next_state.y)**2 
-        next_state.eyaw = (self.angle_diff(next_state.yaw, des_next_state.yaw))**2
+        next_state.eyaw = (angle_diff(next_state.yaw, des_next_state.yaw))**2
 
         return next_state
 
