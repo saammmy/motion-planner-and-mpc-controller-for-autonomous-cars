@@ -25,7 +25,7 @@ except IndexError:
 
 import carla
 
-# # Set up the plot
+# Set up the plot
 # plt.ion()  # Turn on interactive mode
 # fig_1, plot_traj = plt.subplots()
 # x_mpc, y_mpc, x_planner, y_planner = [], [], [], []
@@ -35,33 +35,6 @@ import carla
 # plot_traj.legend([xy_mpc, xy_planner, xy_global], [xy_mpc.get_label(), xy_planner.get_label(), xy_global.get_label()], loc=0)
 # plot_traj.set_xlabel("X")
 # plot_traj.set_ylabel("Y")
-
-# fig_2, plot_vel = plt.subplots()
-# v_mpc, v_planner, time_data = [], [], []
-# vt_mpc, = plot_vel.plot([], [], 'r-', label="MPC Velocity")
-# vt_planner, = plot_vel.plot([], [], 'b-', label="Motion Planner Velocity")
-# plot_vel.legend([vt_mpc, vt_planner], [vt_mpc.get_label(), vt_planner.get_label()], loc=0)
-# plot_vel.set_xlabel("time")
-# plot_vel.set_ylabel("velocity")
-
-# fig_3, plot_str = plt.subplots()
-# str_mpc = []
-# strt_mpc, = plot_str.plot([], [], 'g-')
-# plot_str.set_ylim(-1.22,1.22)
-# plot_str.set_xlabel("time")
-# plot_str.set_ylabel("Steering Angle")
-
-# fig_4, plot_acc = plt.subplots()
-# acc_mpc, realacc_carla = [], []
-# acct_mpc, = plot_acc.plot([], [], 'g-', label="MPC")
-# realacct_carla, = plot_acc.plot([], [], 'b-', label="Carla Acceleration")
-# plot_acc.legend([acct_mpc, realacct_carla], [acct_mpc.get_label(), realacct_carla.get_label()], loc=0)
-# plot_acc.set_ylim(-12,12)
-# plot_acc.set_xlabel("time")
-# plot_acc.set_ylabel("Acceleration")
-
-
-
 
 class PIDController:
     def __init__(self, vehicle):
@@ -186,20 +159,20 @@ class state:
         self.eyaw = EYAW
 
 class inputs:
-    def __init__(self, str_angle=0, throttle=0, brake=0):
+    def __init__(self, str_angle=0, acc=0, brake=0):
         self.str_angle = str_angle
-        self.throttle = throttle
+        self.acc = acc
         self.brake = brake
 
 class MPC:
     def __init__(self, vehicle, world, global_x, global_y, dt = 0.2, prediction_horizon = 8, control_horizon = 1):
         self.w_cte = 0.05 #0.05
         self.w_eyaw = 60.0 #60.0
-        self.w_dthr = 2500 #2500.0
+        self.w_dacc = 2500 #2500.0
         self.w_dstr = 1000 #1000.0
-        self.w_thr = 1.0 #1.0
+        self.w_acc = 1.0 #1.0
         self.w_str = 1.0 #1.0
-        self.w_vel = 5.0 #5.0  
+        self.w_vel = 10.0 #5.0  
         self.w_dvel = 200.0 #200.0
 
         self.dt = dt
@@ -220,17 +193,18 @@ class MPC:
         elif self.method == "graph_tracking":
             self.poly_dict = np.load("./data/poly3_dict.npy", allow_pickle='TRUE').item()
 
-        
         self._dt = dt
         self._error_buffer = deque(maxlen=10)
 
         # Control Input Bounds
-        self.thr_bounds = (-5.0, 5.0)
+        self.acc_bounds = (-5.0, 5.0)
         self.str_bounds = (-1.22, 1.22)
         self.bounds = None
         self.throttle = 0
         self.steering_angle = 0
         self.brake = 0
+        self.final_speed = 0
+        self.prev_pred_acc = 0
         
         # Control Inputs
         self.curr_input = inputs()
@@ -260,9 +234,14 @@ class MPC:
         self.graph_creator = SummaryWriter(self.log_graph_path)
         self.start_time = round(time.time(),2)
     
+    def ms_to_mph(self, speed):
+        return speed * 2.24
+    
+    def mph_to_ms(self, speed):
+        return speed/2.24
+
     def convert_angle(self, angle):
         angle = np.asarray(angle)
-        
         return np.where(angle<0, 2*np.pi+angle, angle)
     
     def normalize_angle(self, angle):
@@ -272,7 +251,7 @@ class MPC:
         diff = abs(a-b) % (2 * np.pi)
         return 2 * np.pi - diff if diff > np.pi else diff
 
-    def plot_traj_carla(self, control_inputs, throttle_ip, steer_ip, brake_ip):
+    def plot_traj_carla(self, control_inputs):
         curr_state = self.vehicle_state
         realacc = curr_state.a
         future_v = []
@@ -300,59 +279,19 @@ class MPC:
                 acc = control_inputs[itr]
             future_v.append(next_state.v)
         self.graph_creator.add_scalar("Steering Angle (Degree)",str*180/np.pi, global_step=t)
-        self.graph_creator.add_scalars("Velocity (mph)",{"Velocity Predicted by MPC":v*2.24, "Velocity Proposed by Local Planner":desv*2.24, "Current Velocity in CARLA":self.vehicle_state.v*2.24},global_step=t)
-        self.graph_creator.add_scalars("Acceleration",{"Acceleration Predicted by MPC":acc, "Carla Acceleration":realacc}, global_step=t)
-        self.graph_creator.add_scalar("Steering Input to Carla",steer_ip, global_step=t)
-        self.graph_creator.add_scalar("Throttle Input to Carla",throttle_ip, global_step=t)
-        self.graph_creator.add_scalar("Brake Input to Carla", brake_ip, global_step=t)
-        
+        self.graph_creator.add_scalars("Velocity (mph)",{"Velocity Predicted by MPC": self.ms_to_mph(v), "Velocity Proposed by Local Planner": self.ms_to_mph(desv), "Current Velocity in CARLA": self.ms_to_mph(self.vehicle_state.v), "Final Goal Speed": self.ms_to_mph(self.final_speed)},global_step=t)
+        self.graph_creator.add_scalars("Acceleration",{"Acceleration Predicted by MPC":self.prev_pred_acc, "Carla Acceleration":realacc}, global_step=t)
+        self.graph_creator.add_scalar("Steering Input to Carla",self.steering_angle, global_step=t)
+        self.graph_creator.add_scalar("Throttle Input to Carla",self.throttle, global_step=t)
+        self.graph_creator.add_scalar("Brake Input to Carla", self.brake, global_step=t)
+        print("Time: ",t)
+        self.prev_pred_acc = acc
 
         # print("MPC Future Velocity: ", future_v)
-                
-        # x_mpc.append(x)
-        # y_mpc.append(y)
-        # x_planner.append(desx)
-        # y_planner.append(desy)
-
-        # xy_mpc.set_data(x_mpc, y_mpc)  # Update the line data
-        # xy_planner.set_data(x_planner, y_planner)  # Update the line data
-        # xy_global.set_data(self.global_x, self.global_y)
-        # plot_traj.relim()  # Update the axes limits
-        # plot_traj.autoscale_view()  # Autoscale the view
-        # plot_traj.set_aspect('equal')
-        # fig_1.canvas.draw()  # Redraw the figure
-        # fig_1.canvas.flush_events()  # Flush the GUI events
-
-        # time_data.append(t)
-
-        # v_mpc.append(v)
-        # v_planner.append(desv)
-        # vt_mpc.set_data(time_data, v_mpc)  # Update the line data
-        # vt_planner.set_data(time_data, v_planner)  # Update the line data
-        # plot_vel.relim()  # Update the axes limits
-        # plot_vel.autoscale_view()  # Autoscale the view
-        # fig_2.canvas.draw()  # Redraw the figure
-        # fig_2.canvas.flush_events()  # Flush the GUI events
-
-        # str_mpc.append(str)
-        # strt_mpc.set_data(time_data, str_mpc)
-        # plot_str.relim()  # Update the axes limits
-        # plot_str.autoscale_view()  # Autoscale the view
-        # fig_3.canvas.draw()  # Redraw the figure
-        # fig_3.canvas.flush_events()  # Flush the GUI events
-
-        # acc_mpc.append(acc)
-        # realacc_carla.append(realacc)
-        # acct_mpc.set_data(time_data, acc_mpc)
-        # realacct_carla.set_data(time_data, realacc_carla)
-        # plot_acc.relim()  # Update the axes limits
-        # plot_acc.autoscale_view()  # Autoscale the view
-        # fig_4.canvas.draw()  # Redraw the figure
-        # fig_4.canvas.flush_events()  # Flush the GUI events
 
     def convert_input_to_carla(self, str_angle, target_acc):
         self.steering_angle = str_angle / self.str_bounds[1]
-        acc_maped = target_acc / self.thr_bounds[1]
+        acc_maped = target_acc / self.acc_bounds[1]
 
         if self.method == "throttle_offset":
             if acc_maped >= 0:
@@ -379,7 +318,6 @@ class MPC:
                 _ie = 0.0
 
             self.throttle = np.clip((self._k_p * error) + (self._k_d * _de) + (self._k_i * _ie), 0, 1.0)
-            print("Throttle: ", throttle)
         
         elif self.method == "pure_pid":
             error = 30 - self.vehicle_state.v
@@ -393,7 +331,6 @@ class MPC:
                 _ie = 0.0
 
             self.throttle = np.clip((self._k_p * error) + (self._k_d * _de) + (self._k_i * _ie), 0, 1.0)
-            print("Throttle: ", throttle)
         
         elif self.method == "graph_tracking":
             delta_min = float('inf')
@@ -401,9 +338,6 @@ class MPC:
             target_vel = self.vehicle_state.v + target_acc * self.dt
             
             if self.waypoints[3,-1] < 0.5:
-                # print("I am here")
-                # self.throttle -= 0.05
-                # if self.throttle <= 0:
                 self.brake += 0.1
                 self.brake = min(self.brake,1)
                 self.throttle = 0
@@ -429,18 +363,20 @@ class MPC:
         self.vehicle_state.cte = cte
         self.vehicle_state.eyaw = eyaw
     
-    def update_waypoints(self, x, y, yaw, v, vehicle_state, dt, planning_time):
+    def update_waypoints(self, x, y, yaw, v, vehicle_state, dt, planning_time, final_speed):
         self.update_vehicle_state(vehicle_state["x"], vehicle_state["y"], vehicle_state["yaw"], vehicle_state["speed"], vehicle_state["long_acc"], vehicle_state["z"])
         self.dt = dt
         self.planning_time = planning_time
         self.prediction_horizon = min(int(planning_time/dt),8)
-        self.bounds = (self.thr_bounds,)*self.prediction_horizon + (self.str_bounds,)*self.prediction_horizon
+        self.bounds = (self.acc_bounds,)*self.prediction_horizon + (self.str_bounds,)*self.prediction_horizon
 
         self.waypoints = np.zeros(shape=(4, np.shape(x)[0]-1))
         self.waypoints[0,:] = x[1:]
         self.waypoints[1,:] = y[1:]
         self.waypoints[2,:] = self.convert_angle(yaw[1:])
         self.waypoints[3,:] = v[1:]        
+        
+        self.final_speed = final_speed
     
     def global_to_vehicle(self, waypoints):
         n_waypoints = np.shape(waypoints)[1]
@@ -459,7 +395,7 @@ class MPC:
         next_state.x = curr_state.x + curr_state.v*np.cos(curr_state.yaw)*self.dt
         next_state.y = curr_state.y + curr_state.v*np.sin(curr_state.yaw)*self.dt
         next_state.yaw = curr_state.yaw + curr_state.v/self.length * np.tan(control_input.str_angle)*self.dt
-        next_state.v = curr_state.v + control_input.throttle*self.dt
+        next_state.v = curr_state.v + control_input.acc*self.dt
 
         next_state.cte = (next_state.x - des_next_state.x)**2 + (next_state.y - des_next_state.y)**2
         next_state.eyaw = (next_state.yaw - des_next_state.yaw)**2
@@ -473,16 +409,16 @@ class MPC:
         next_state.y = curr_state.y + curr_state.v*np.sin(curr_state.yaw + curr_state.beta)*self.dt
         next_state.beta = self.normalize_angle(np.arctan((self.lr/self.length)*np.tan(control_input.str_angle)))
         next_state.yaw = self.normalize_angle(curr_state.yaw + curr_state.v/self.lr * np.sin(next_state.beta)*self.dt)
-        next_state.v = curr_state.v + control_input.throttle*self.dt
+        next_state.v = curr_state.v + control_input.acc*self.dt
         
         next_state.cte = (next_state.x - des_next_state.x)**2 + (next_state.y - des_next_state.y)**2 
         next_state.eyaw = (self.angle_diff(next_state.yaw, des_next_state.yaw))**2
 
         return next_state
 
-    def get_next_state(self, curr_state, throttle, str_angle, des_next_state):
+    def get_next_state(self, curr_state, acc, str_angle, des_next_state):
         control_input = inputs()
-        control_input.throttle = throttle
+        control_input.acc = acc
         control_input.str_angle = str_angle
         
         next_state = self.model_cg(control_input, curr_state, des_next_state)
@@ -492,27 +428,17 @@ class MPC:
     def get_costs(self,curr_state, next_state, control_inputs, itr):
         cost_cte = self.w_cte*(next_state.cte)
         cost_eyaw = self.w_eyaw*(next_state.eyaw)
-        cost_vel = self.w_vel * (next_state.v - self.waypoints[3,-1])**2 #Checking with final value
-        cost_thr = self.w_thr*(control_inputs[itr])**2
+        cost_vel = self.w_vel * (next_state.v - self.waypoints[3,itr])**2 #Checking with final value
+        cost_thr = self.w_acc*(control_inputs[itr])**2
         cost_str = self.w_str*(control_inputs[itr+self.prediction_horizon])**2
         cost_dvel = self.w_dvel*(next_state.v - curr_state.v)**2
         if itr!=0:
-            cost_dthr = self.w_dthr*(control_inputs[itr] - control_inputs[itr-1])**2
+            cost_dthr = self.w_dacc*(control_inputs[itr] - control_inputs[itr-1])**2
             cost_dstr = self.w_dstr*(control_inputs[itr+self.prediction_horizon] - control_inputs[itr+self.prediction_horizon-1])**2
         else:
             cost_dthr = cost_dstr = 0
             
         cost = cost_cte + cost_eyaw + cost_vel + cost_thr + cost_str + cost_dvel + cost_dthr + cost_dstr
-
-        # print("---------------------------")
-        # print("Cost cte: ",cost_cte)
-        # print("Cost cost_eyaw: ",cost_eyaw)
-        # print("Cost cost_vel: ",cost_vel)
-        # print("Cost cost_thr: ",cost_thr)
-        # print("Cost cost_str: ",cost_str)
-        # print("Cost cost_dvel: ",cost_dvel)
-        # print("Cost cost_dthr: ",cost_dthr)
-        # print("Cost cost_dstr: ",cost_dstr)
 
         return cost
 
@@ -531,24 +457,19 @@ class MPC:
     def run_step(self):
         # Transfer the coordinates from global coordinates to vehicle coordinates
         self.waypoints_wrt_vehicle = self.global_to_vehicle(self.waypoints)
-        # print(self.waypoints[3,-1])
         
-        # Run the minimization
-        # print("Sample Time: ", self.dt, "Prediction Horizon: ", self.prediction_horizon, "Local Planning Time:", self.planning_time)
-        
+        # Run the minimization      
         control_inputs = [0,0] * self.prediction_horizon
-        control_inputs = minimize(self.cost_function, control_inputs, method='SLSQP' , bounds = self.bounds) #L-BFGS-B
+        control_inputs = minimize(self.cost_function, control_inputs, method='SLSQP' , bounds = self.bounds)
         control_inputs = control_inputs.x
         
-       
-
         for i in range(self.control_horizon):
             s = time.time()
             self.convert_input_to_carla(control_inputs[i+self.prediction_horizon], control_inputs[i])
             if self.mpc_plot:
-                self.plot_traj_carla(control_inputs, self.throttle, self.steering_angle, self.brake)
-                # print("Local Planner Future Velocities: ", self.waypoints[3,:])
+                self.plot_traj_carla(control_inputs)
                 plt.show()
+            # print("Local Planner Future Velocities: ", self.waypoints[3,:])
             # print("Waypoints: ", self.waypoints)
             # print("Waypoints wrt vehicle ", self.waypoints_wrt_vehicle)
             # print("Control Inputs ", control_inputs)

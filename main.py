@@ -73,7 +73,7 @@ def get_current_states(Ego, local_planner):
         "speed": ego_speed,
         "s": s,
         "d":d,
-        "target_speed": Ego.get_speed_limit(),
+        "target_speed": Ego.get_speed_limit()*0.277778,
         "total_acc": ego_acc1
     }
     return current_state
@@ -81,7 +81,7 @@ def get_current_states(Ego, local_planner):
 def draw_trajectory(world, x,y, height=0.5, time=0.3):
     for i in range(len(x)): #len(x)):
             begin = carla.Location(x=x[i],y=y[i],z=height)
-            world.debug.draw_point(begin,size=0.2,life_time=time)
+            world.debug.draw_point(begin,size=0.05,life_time=time)
 
 def find_junction(waypoints_,world):
     junction = []
@@ -112,11 +112,16 @@ if __name__ == "__main__":
         start_point_car = carla.Transform(carla.Location(x=625, y=-16.0, z=0.300000), carla.Rotation(pitch=0.000000, yaw=180, roll=0.000000))
         start_point_route = carla.Transform(carla.Location(x=625, y=-16.0, z=0.300000), carla.Rotation(pitch=0.000000, yaw=180, roll=0.000000))
     else:
-        start_point_car = carla.Transform(carla.Location(x=189.740814, y=-100.026948, z=0.300000), carla.Rotation(pitch=0.000000, yaw=90, roll=0.000000))
-        start_point_route = carla.Transform(carla.Location(x=189.740814, y=-102.026948, z=0.300000), carla.Rotation(pitch=0.000000, yaw=90, roll=0.000000))
+        start_point_car = carla.Transform(carla.Location(x=189.740814, y=-10.026948, z=0.300000), carla.Rotation(pitch=0.000000, yaw=90, roll=0.000000))
+        start_point_route = carla.Transform(carla.Location(x=189.740814, y=-12.026948, z=0.300000), carla.Rotation(pitch=0.000000, yaw=90, roll=0.000000))
+        # start_point_car = carla.Transform(carla.Location(x=600, y=-17.5, z=0.300000), carla.Rotation(pitch=0.000000, yaw=180, roll=0.000000))
+        # start_point_route = carla.Transform(carla.Location(x=600, y=-17.5, z=0.300000), carla.Rotation(pitch=0.000000, yaw=180, roll=0.000000))
 
-    obs = carla.Transform(carla.Location(x=189.740814, y=-30.026948, z=0.300000), carla.Rotation(pitch=0.000000, yaw=90, roll=0.000000))  
-    end_point = carla.Transform(carla.Location(x=-99.3, y=189, z=0.300000))
+    # obs = carla.Transform(carla.Location(x=189.740814, y=-90.026948, z=0.300000), carla.Rotation(pitch=0.000000, yaw=90, roll=0.000000)) # For Town 5
+    obs = carla.Transform(carla.Location(x=100.0, y=188, z=0.300000), carla.Rotation(pitch=0.000000, yaw=180, roll=0.000000)) # For Town 5
+    # obs = carla.Transform(carla.Location(x=525, y=-17.5, z=0.300000), carla.Rotation(pitch=0.000000, yaw=180, roll=0.000000))
+    end_point = carla.Transform(carla.Location(x=-99.3, y=189, z=0.300000)) # Town 5
+    # end_point = carla.Transform(carla.Location(x=-0, y=-17.5, z=0.300000)) # Town 6
 
     #Generate Global Path Waypoints
     dao = GlobalRoutePlannerDAO(world.get_map(), 3)   
@@ -144,7 +149,7 @@ if __name__ == "__main__":
     Ego = world.spawn_actor(vehicle_bp,start_point_car)
     actors.append(Ego)
 
-    spawn_obstacles = True
+    spawn_obstacles = False
 
     if spawn_obstacles:
         obs_veh = world.spawn_actor(vehicle_bp,obs)
@@ -157,13 +162,16 @@ if __name__ == "__main__":
     # Setup parameters
     reached_goal = False
 
+    time.sleep(1)
 
     # Setup Behavior Planner
     local_planner = LocalPlanner(world,sp,s,rx,ry,ryaw,rk)
     behavior_planner = BehaviorPlanner(local_planner)
     controller = MPC(Ego, world, global_x, global_y)
-    
-    time.sleep(1)
+
+    if spawn_obstacles:
+        control = carla.VehicleControl(0.4, 0, 0)
+        obs_veh.apply_control(control)
 
     if test == True:
         flag = 1
@@ -184,7 +192,7 @@ if __name__ == "__main__":
         prev_speed = 0
         t = 0
 
-        throttle = 0.05
+        throttle = 0.8
         brake = 0
         steering = 0
         path = "./data/"+ str(throttle)
@@ -237,23 +245,25 @@ if __name__ == "__main__":
             if speed <0.01 and flag == 0:
                 break
         else:
-            state, target_s, target_d = behavior_planner.get_next_behavior(current_state, lookahead_path= 10 + current_state["speed"]*3, vehicles=vehicles)
+            behavior, target_s, target_d = behavior_planner.get_next_behavior(current_state, lookahead_path= 10 + current_state["speed"]*3, vehicles=vehicles)
             # print("EGo Speed: ", current_state["speed"])
             # print("Current State", state)
-            if state == "SAFETY_STOP":
+            if behavior == "SAFETY_STOP":
                 print("Applying Emergency Brake")
                 Ego.apply_control((carla.VehicleControl(throttle=0, brake=1)))
                 continue
 
-            x, y, yaw, v, dt, planning_time = local_planner.run_step(current_state, target_s, target_d) 
+            x, y, yaw, v, dt, planning_time, final_speed = local_planner.run_step(current_state, target_s, target_d, behavior) 
             e2 = time.time()
             draw_trajectory(world, x,y, current_state["z"]+0.5)
             e3 = time.time()
-            controller.update_waypoints(x, y, yaw, v, current_state, dt, planning_time)
+            controller.update_waypoints(x, y, yaw, v, current_state, dt, planning_time, final_speed)
             print("------")
             # print("Current Velocity for Local planner", v[0])
-            print("Current Velocity of vehicle", current_state["speed"])
+            print("Current Velocity of vehicle", current_state["speed"]*2.24)
             print("CUrrent Acceleration of Ego: ", current_state["long_acc"])
+            # print("X: ", current_state["x"])
+            # print("Y: ", current_state["y"])
             controller.run_step()
             e4 = time.time()
             
@@ -266,10 +276,10 @@ if __name__ == "__main__":
 
 if test == True:
 
-    np.savetxt(path + "/speed_list_acc.csv", np.array(speed_list_acc))
-    np.savetxt(path + "/acc_list.csv", np.array(acc_list))
-    np.savetxt(path + "/speed_list_dec.csv", np.array(speed_list_dec))
-    np.savetxt(path + "/dec_list.csv", np.array(dec_list))
+    # np.savetxt(path + "/speed_list_acc.csv", np.array(speed_list_acc))
+    # np.savetxt(path + "/acc_list.csv", np.array(acc_list))
+    # np.savetxt(path + "/speed_list_dec.csv", np.array(speed_list_dec))
+    # np.savetxt(path + "/dec_list.csv", np.array(dec_list))
 
     # Full Profile
     plt.figure()
