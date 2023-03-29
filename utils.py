@@ -6,6 +6,9 @@ def ms_to_mph(speed):
 def mph_to_ms(speed):
     return speed/2.24
 
+def kmph_to_ms(speed):
+    return speed*0.277778
+
 def m_to_feet(d):
     return d*3.28
 

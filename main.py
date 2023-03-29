@@ -13,6 +13,7 @@ import time
 from Controller import MPC
 from scipy.optimize import curve_fit
 from utils import *
+from params import *
 
 try:
     sys.path.append(glob.glob('../carla/dist/carla-*%d.%d-%s.egg' % (
@@ -50,7 +51,7 @@ def preprocess(waypoints):
 
 def get_current_states(Ego, local_planner):
     ego_vehicle_loc = Ego.get_location()
-    ego_wpt = world.get_map().get_waypoint(ego_vehicle_loc)
+    # ego_wpt = world.get_map().get_waypoint(ego_vehicle_loc)
     ego_vel = Ego.get_velocity()
     ego_speed = sqrt(ego_vel.x**2 + ego_vel.y**2)
     ego_acc = Ego.get_acceleration()
@@ -69,20 +70,20 @@ def get_current_states(Ego, local_planner):
         "lat_vel" : round(ego_vel[1],2),
         "long_acc": round(ego_acc[0],2),
         "lat_acc": round(ego_acc[1],2),
-        "lane": ego_wpt.lane_id,
-        "waypoint": ego_wpt,
+        # "lane": ego_wpt.lane_id,
+        # "waypoint": ego_wpt,
         "speed": ego_speed,
         "s": s,
         "d":d,
-        "target_speed": Ego.get_speed_limit()*0.277778,
+        "target_speed": kmph_to_ms(Ego.get_speed_limit()),
         "total_acc": ego_acc1
     }
     return current_state
 
-def draw_trajectory(world, x,y, height=0.5, time=0.3):
+def draw_trajectory(world, x,y, height=0.5, time=PLOT_TIME):
     for i in range(len(x)): #len(x)):
-            begin = carla.Location(x=x[i],y=y[i],z=height)
-            world.debug.draw_point(begin,size=0.05,life_time=time)
+        begin = carla.Location(x=x[i],y=y[i],z=height)
+        world.debug.draw_point(begin,size=0.05,life_time=time)
 
 def find_junction(waypoints_,world):
     junction = []
@@ -103,7 +104,12 @@ if __name__ == "__main__":
     # Setup CARLA Simualtor
     client = carla.Client('localhost',2000)
     client.set_timeout(10.0)
-    world = client.load_world('Town05')
+    world = client.load_world(TOWN)
+    if SYNCHRONOUS_MODE:
+        settings = world.get_settings()
+        settings.synchronous_mode = True
+        settings.fixed_delta_seconds = TICK_TIME
+        world.apply_settings(settings)
     actors = []
 
     # Get start and end points
@@ -113,16 +119,21 @@ if __name__ == "__main__":
         start_point_car = carla.Transform(carla.Location(x=625, y=-16.0, z=0.300000), carla.Rotation(pitch=0.000000, yaw=180, roll=0.000000))
         start_point_route = carla.Transform(carla.Location(x=625, y=-16.0, z=0.300000), carla.Rotation(pitch=0.000000, yaw=180, roll=0.000000))
     else:
-        start_point_car = carla.Transform(carla.Location(x=189.740814, y=-10.026948, z=0.300000), carla.Rotation(pitch=0.000000, yaw=90, roll=0.000000))
-        start_point_route = carla.Transform(carla.Location(x=189.740814, y=-12.026948, z=0.300000), carla.Rotation(pitch=0.000000, yaw=90, roll=0.000000))
-        # start_point_car = carla.Transform(carla.Location(x=600, y=-17.5, z=0.300000), carla.Rotation(pitch=0.000000, yaw=180, roll=0.000000))
-        # start_point_route = carla.Transform(carla.Location(x=600, y=-17.5, z=0.300000), carla.Rotation(pitch=0.000000, yaw=180, roll=0.000000))
+        # start_point_car = carla.Transform(carla.Location(x=189.740814, y=-10.026948, z=0.300000), carla.Rotation(pitch=0.000000, yaw=90, roll=0.000000))
+        # start_point_route = carla.Transform(carla.Location(x=189.740814, y=-12.026948, z=0.300000), carla.Rotation(pitch=0.000000, yaw=90, roll=0.000000))
+        start_point_car = carla.Transform(carla.Location(x=600, y=-17.5, z=0.300000), carla.Rotation(pitch=0.000000, yaw=180, roll=0.000000))
+        start_point_route = carla.Transform(carla.Location(x=600, y=-17.5, z=0.300000), carla.Rotation(pitch=0.000000, yaw=180, roll=0.000000))
 
     # obs = carla.Transform(carla.Location(x=189.740814, y=-90.026948, z=0.300000), carla.Rotation(pitch=0.000000, yaw=90, roll=0.000000)) # For Town 5
-    obs = carla.Transform(carla.Location(x=100.0, y=188, z=0.300000), carla.Rotation(pitch=0.000000, yaw=180, roll=0.000000)) # For Town 5
-    # obs = carla.Transform(carla.Location(x=525, y=-17.5, z=0.300000), carla.Rotation(pitch=0.000000, yaw=180, roll=0.000000))
-    end_point = carla.Transform(carla.Location(x=-99.3, y=189, z=0.300000)) # Town 5
-    # end_point = carla.Transform(carla.Location(x=-0, y=-17.5, z=0.300000)) # Town 6
+    # obs = carla.Transform(carla.Location(x=100.0, y=188, z=0.300000), carla.Rotation(pitch=0.000000, yaw=180, roll=0.000000)) # For Town 5
+    obs = carla.Transform(carla.Location(x=525, y=-17.5, z=0.300000), carla.Rotation(pitch=0.000000, yaw=180, roll=0.000000))
+    # end_point = carla.Transform(carla.Location(x=-99.3, y=189, z=0.300000)) # Town 5
+    end_point = carla.Transform(carla.Location(x=-0, y=-17.5, z=0.300000)) # Town 6
+
+    # Town03 start and end
+    # start_point_car = carla.Transform(carla.Location(x=-10, y=45.80, z=0.5), carla.Rotation(yaw=90))
+    # start_point_route = carla.Transform(carla.Location(x=-10, y=40.80, z=0.5), carla.Rotation(yaw=90))
+    # end_point = random.choice(spawn_points)
 
     #Generate Global Path Waypoints
     dao = GlobalRoutePlannerDAO(world.get_map(), 3)   
@@ -150,7 +161,7 @@ if __name__ == "__main__":
     Ego = world.spawn_actor(vehicle_bp,start_point_car)
     actors.append(Ego)
 
-    spawn_obstacles = False
+    spawn_obstacles = True
 
     if spawn_obstacles:
         obs_veh = world.spawn_actor(vehicle_bp,obs)
@@ -203,7 +214,14 @@ if __name__ == "__main__":
         s1 = s2 = time.time()
     
     # obs_veh.set_target_velocity(target_velocity)
+    if SYNCHRONOUS_MODE:
+        world.tick()
+    
+    spectator = world.get_spectator()
+    spectator.set_transform(Ego.get_transform())
     while  not reached_goal:
+        # timestamp = world.get_snapshot()
+        # print(f"elapsed_seconds: {timestamp.elapsed_seconds}, delta_seconds: {timestamp.delta_seconds}")
         s = time.time()
         current_state = get_current_states(Ego, local_planner)
         e1 = time.time()
@@ -254,25 +272,25 @@ if __name__ == "__main__":
                 Ego.apply_control((carla.VehicleControl(throttle=0, brake=1)))
                 continue
 
-            x, y, yaw, v, dt, planning_time, final_speed = local_planner.run_step(current_state, target_s, target_d, behavior) 
+            x, y, yaw, v, final_speed = local_planner.run_step(current_state, target_s, target_d, behavior) 
             e2 = time.time()
-            draw_trajectory(world, x,y, current_state["z"]+0.5)
+            # draw_trajectory(world, x,y, current_state["z"]+0.5)
             e3 = time.time()
-            controller.update_waypoints(x, y, yaw, v, current_state, dt, planning_time, final_speed)
+            controller.update_waypoints(x, y, yaw, v, current_state, final_speed)
             print("------")
             # print("Current Velocity for Local planner", v[0])
-            print("Current Velocity of vehicle", ms_to_mph(current_state["speed"]))
-            print("CUrrent Acceleration of Ego: ", current_state["long_acc"])
+            print("Current Velocity of vehicle", round(ms_to_mph(current_state["speed"]),2))
+            # print("CUrrent Acceleration of Ego: ", round(current_state["long_acc"],2))
             # print("X: ", current_state["x"])
             # print("Y: ", current_state["y"])
             controller.run_step()
             e4 = time.time()
-            
-            # print("TOTAL TIME: ", e4-s)
-            # print("Get State time: ", e1-s)
-            # print("Local Planner Time: ", e2-e1)
-            # print("Drawing Time: ", e3-e2)
-            # print("Controller Time: ", e4-e3)
+            if CONTROL_HORIZON == 1:
+                print("TOTAL TIME: ", round(e4-s,4))
+            # print("Get State time: ", round(e1-s,3))
+            # print("Local Planner Time: ", round(e2-e1,3))
+            # print("Drawing Time: ", round(e3-e2,3))
+            # print("Controller Time: ", round(e4-e3,3))
             # print("---------------------------")
 
 if test == True:

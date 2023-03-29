@@ -9,6 +9,7 @@ from scipy.optimize import minimize, differential_evolution
 from matplotlib import pyplot as plt
 from collections import deque
 from utils import *
+from params import *
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -166,7 +167,7 @@ class inputs:
         self.brake = brake
 
 class MPC:
-    def __init__(self, vehicle, world, global_x, global_y, dt = 0.2, prediction_horizon = 8, control_horizon = 1):
+    def __init__(self, vehicle, world, global_x, global_y):
         self.w_cte = 10.0 #0.05
         self.w_eyaw = 60.0 #60.0
         self.w_dacc = 2500 #2500.0
@@ -176,10 +177,10 @@ class MPC:
         self.w_vel = 5.0 #5.0  
         self.w_dvel = 100.0 #200.0
 
-        self.dt = dt
-        self.prediction_horizon = prediction_horizon
-        self.control_horizon = control_horizon
-        self.planning_time = 0
+        self.dt = SAMPLE_TIME
+        self.prediction_horizon = PREDICTION_HORIZON
+        self.control_horizon = CONTROL_HORIZON
+
         self.method = "graph_tracking"
         if self.method =="throttle_offset":
             self.thr_offset = 0.75
@@ -194,7 +195,7 @@ class MPC:
         elif self.method == "graph_tracking":
             self.poly_dict = np.load("./data/poly3_dict.npy", allow_pickle='TRUE').item()
 
-        self._dt = dt
+        self._dt = SAMPLE_TIME
         self._error_buffer = deque(maxlen=10)
 
         # Control Input Bounds
@@ -234,6 +235,12 @@ class MPC:
             shutil.rmtree(self.log_graph_path + "/", ignore_errors=False)
         self.graph_creator = SummaryWriter(self.log_graph_path)
         self.start_time = round(time.time(),2)
+        self.end_time = round(time.time(),2)
+
+    def draw_trajectory(self, x, y, world, time=PLOT_TIME):
+        for i in range(len(x)): #len(x)):
+            begin = carla.Location(x=x[i],y=y[i],z=self.vehicle_state.z+0.7)
+            world.debug.draw_point(begin,size=0.05,life_time=time)
 
     def plot_traj_carla(self, control_inputs):
         curr_state = self.vehicle_state
@@ -244,10 +251,10 @@ class MPC:
 
             next_state = self.get_next_state(curr_state, control_inputs[itr], control_inputs[itr+self.prediction_horizon], des_next_state)
             
-            curr_point = carla.Location(x=curr_state.x,y=curr_state.y,z=self.vehicle_state.z+0.2)
-            next_point = carla.Location(x=next_state.x,y=next_state.y,z=self.vehicle_state.z+0.2)
+            curr_point = carla.Location(x=curr_state.x,y=curr_state.y,z=self.vehicle_state.z+0.4)
+            next_point = carla.Location(x=next_state.x,y=next_state.y,z=self.vehicle_state.z+0.4)
             
-            self.world.debug.draw_arrow(curr_point, next_point, thickness=0.1, arrow_size=0.1, color=carla.Color(255, 0, 0), life_time=0.3)
+            self.world.debug.draw_arrow(curr_point, next_point, thickness=0.1, arrow_size=0.1, color=carla.Color(255, 0, 0), life_time=PLOT_TIME)
             curr_state = next_state
             if itr == 0:
                 x = -curr_state.x  # Update the x value
@@ -268,10 +275,10 @@ class MPC:
         self.graph_creator.add_scalar("Steering Input to Carla",self.steering_angle, global_step=t)
         self.graph_creator.add_scalar("Throttle Input to Carla",self.throttle, global_step=t)
         self.graph_creator.add_scalar("Brake Input to Carla", self.brake, global_step=t)
-        print("Time: ",t)
+    
         self.prev_pred_acc = acc
 
-        print("MPC Future Velocity: ", future_v)
+        # print("MPC Future Velocity: ", future_v)
 
     def convert_input_to_carla(self, str_angle, target_acc):
         self.steering_angle = str_angle / self.str_bounds[1]
@@ -347,11 +354,8 @@ class MPC:
         self.vehicle_state.cte = cte
         self.vehicle_state.eyaw = eyaw
     
-    def update_waypoints(self, x, y, yaw, v, vehicle_state, dt, planning_time, final_speed):
+    def update_waypoints(self, x, y, yaw, v, vehicle_state, final_speed):
         self.update_vehicle_state(vehicle_state["x"], vehicle_state["y"], vehicle_state["yaw"], vehicle_state["speed"], vehicle_state["long_acc"], vehicle_state["z"])
-        self.dt = dt
-        self.planning_time = planning_time
-        self.prediction_horizon = min(int(planning_time/dt),8)
         self.bounds = (self.acc_bounds,)*self.prediction_horizon + (self.str_bounds,)*self.prediction_horizon
 
         self.waypoints = np.zeros(shape=(4, np.shape(x)[0]-1))
@@ -437,8 +441,9 @@ class MPC:
             curr_state = next_state
     
         return cost
-
+    
     def run_step(self):
+
         # Transfer the coordinates from global coordinates to vehicle coordinates
         self.waypoints_wrt_vehicle = self.global_to_vehicle(self.waypoints)
         
@@ -447,11 +452,16 @@ class MPC:
         control_inputs = minimize(self.cost_function, control_inputs, method='SLSQP' , bounds = self.bounds)
         control_inputs = control_inputs.x
         
+        if not SYNCHRONOUS_MODE and CONTROL_HORIZON > 1:
+            start = time.time()
+            print("TOTAL TIME: ", round(start-self.end_time,4))
+        
         for i in range(self.control_horizon):
             s = time.time()
             self.convert_input_to_carla(control_inputs[i+self.prediction_horizon], control_inputs[i])
             if self.mpc_plot:
                 self.plot_traj_carla(control_inputs)
+                self.draw_trajectory(self.waypoints[0], self.waypoints[1], self.world)
                 plt.show()
             # print("Local Planner Future Velocities: ", self.waypoints[3,:])
             # print("Waypoints: ", self.waypoints)
@@ -463,5 +473,17 @@ class MPC:
 
             control = carla.VehicleControl(self.throttle, self.steering_angle, self.brake)
             self.vehicle.apply_control(control)
+            if SYNCHRONOUS_MODE:
+                self.world.tick()
+            elif self.control_horizon > 1:
+                if i!= self.control_horizon-1:
+                    time.sleep(self.dt)
+                    e = time.time()
+                    print("TOTAL TIME: ", round(e-s,4))
+                else:
+                    self.end_time = time.time()
+                    time.sleep(self.dt - COMPUTATION_TIME)
+                    
+                
         
             

@@ -7,6 +7,7 @@ import os
 import time
 from plotter import *
 from utils import *
+from params import *
 
 from velocity_generator.ramp_profile import *
 try:
@@ -146,9 +147,9 @@ class QuarticPolynomial:
 class LocalPlanner:
     def __init__(self,world,sp,s,x,y, yaw, curvature):
         self.world = world
-        self.planning_time = 1.6 #seconds
+        self.planning_time = PLANNING_DURATION #seconds
 
-        self.dt = 0.2
+        self.dt = SAMPLE_TIME
         self.refrence_path = sp
         self.s = s
         self.x = x
@@ -378,13 +379,13 @@ class LocalPlanner:
         
         # curvature_speed = 200
         
-        print("Target Speed set by Behavior Planner: ",ms_to_mph(target_speed))
-        print("Achievable Target Speed set by Behavior Planner: ", ms_to_mph(achievable_speed))
-        print("Speed limit due to Curvature: ",  ms_to_mph(curvature_speed))
+        print("Target Speed set by Behavior Planner: ",round(ms_to_mph(target_speed),2))
+        print("Achievable Target Speed set by Behavior Planner: ", round(ms_to_mph(achievable_speed),2))
+        print("Speed limit due to Curvature: ",  round(ms_to_mph(curvature_speed),2))
         
         final_speed = min(achievable_speed, curvature_speed, target_speed)
 
-        print("Final Speed: ",ms_to_mph(final_speed))
+        print("Final Speed: ",round(ms_to_mph(final_speed),2))
         
         fp = FrenetPath()
         fp.dt = self.dt
@@ -420,5 +421,5 @@ class LocalPlanner:
         x,y,yaw = opt_traj.x , opt_traj.y, opt_traj.yaw
         
         # plot_trajectory(self.trajectory_plot ,opt_traj.t, opt_traj.x, opt_traj.y, v*np.ones((len(opt_traj.x))), a*np.ones((len(opt_traj.x))), opt_traj.j)
-        return x, y, yaw, v, opt_traj.dt, opt_traj.T, final_speed
+        return x, y, yaw, v, final_speed
 
