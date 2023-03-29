@@ -162,7 +162,7 @@ class LocalPlanner:
         self.min_acceleration = -5
         self.target_velocity = None
         self.velocity_generator = RampGenerator(max_accel= self.max_acceleration, min_accel = self.min_acceleration)
-
+        self.curvature_lookahed_time = 5 #secs
         self.K_LAT = 1.0 
         self.K_LON = 1.0 
         self.K_Di = 20000
@@ -356,33 +356,17 @@ class LocalPlanner:
 
         achievable_speed = curr_speed + req_accel*self.planning_time
         
-        fp = FrenetPath()
-        fp.dt = self.dt
-        fp.T = self.planning_time
-        self.lat_traj_frenet = QuinticPolynomial(current_state["d"],current_state["lat_vel"], current_state["lat_acc"],target_d,0,0,self.planning_time)
-
-        fp.t = [t for t in np.arange(0.0, self.planning_time + self.dt , self.dt)]
-        # print(fp.t)
-        fp.d = [self.lat_traj_frenet.calc_pos(t) for t in fp.t]
-        fp.d_d = [self.lat_traj_frenet.calc_vel(t) for t in fp.t]
-        fp.d_dd = [self.lat_traj_frenet.calc_acc(t) for t in fp.t]
-        fp.d_ddd = [self.lat_traj_frenet.calc_jerk(t) for t in fp.t]
-
-        self.lon_traj_frenet = QuarticPolynomial(current_state["s"],current_state["long_vel"], current_state["long_acc"],achievable_speed,0,self.planning_time)
-
-        fp.s = [self.lon_traj_frenet.calc_pos(t) for t in fp.t]
-        fp.s_d = [self.lon_traj_frenet.calc_vel(t) for t in fp.t] 
-        fp.s_dd = [self.lon_traj_frenet.calc_acc(t) for t in fp.t]
-        fp.s_ddd = [self.lon_traj_frenet.calc_jerk(t) for t in fp.t]
-
-        frenet_paths.append(fp)
-
-        frenet_paths = self.calc_global_paths(frenet_paths)
-
-        opt_traj = frenet_paths[0]
+        # Calculating max curvature in look ahead distance
+        current_s = round(current_state["s"])
+        next_s = round(current_s + current_state["speed"]*1.0)
+        lookahed_s = round(current_s + max(30 , current_state["speed"]*self.curvature_lookahed_time))
+        next_s_index = np.where(self.s == next_s)[0][0]
+        lookahed_s_index = np.where(self.s == lookahed_s)[0][0]
+        global_curvature = self.curvature[next_s_index:lookahed_s_index]
+        max_curature = max(global_curvature)
 
         superelevation = 6
-        radius_feet = m_to_feet(1/max(np.array(opt_traj.kappa)))
+        radius_feet = m_to_feet(1/max_curature)
         
         if behavior!="lane_change":
             if achievable_speed < mph_to_ms(50):
@@ -401,6 +385,31 @@ class LocalPlanner:
         final_speed = min(achievable_speed, curvature_speed, target_speed)
 
         print("Final Speed: ",ms_to_mph(final_speed))
+        
+        fp = FrenetPath()
+        fp.dt = self.dt
+        fp.T = self.planning_time
+        self.lat_traj_frenet = QuinticPolynomial(current_state["d"],current_state["lat_vel"], current_state["lat_acc"],target_d,0,0,self.planning_time)
+
+        fp.t = [t for t in np.arange(0.0, self.planning_time + self.dt , self.dt)]
+        # print(fp.t)
+        fp.d = [self.lat_traj_frenet.calc_pos(t) for t in fp.t]
+        fp.d_d = [self.lat_traj_frenet.calc_vel(t) for t in fp.t]
+        fp.d_dd = [self.lat_traj_frenet.calc_acc(t) for t in fp.t]
+        fp.d_ddd = [self.lat_traj_frenet.calc_jerk(t) for t in fp.t]
+
+        self.lon_traj_frenet = QuarticPolynomial(current_state["s"],current_state["long_vel"], current_state["long_acc"],final_speed,0,self.planning_time)
+
+        fp.s = [self.lon_traj_frenet.calc_pos(t) for t in fp.t]
+        fp.s_d = [self.lon_traj_frenet.calc_vel(t) for t in fp.t] 
+        fp.s_dd = [self.lon_traj_frenet.calc_acc(t) for t in fp.t]
+        fp.s_ddd = [self.lon_traj_frenet.calc_jerk(t) for t in fp.t]
+
+        frenet_paths.append(fp)
+
+        frenet_paths = self.calc_global_paths(frenet_paths)
+
+        opt_traj = frenet_paths[0]
 
         # if use FOT speed profile
         #x,y,yaw,v = opt_traj.x , opt_traj.y, opt_traj.yaw, opt_traj.v

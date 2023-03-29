@@ -121,8 +121,8 @@ if __name__ == "__main__":
     # obs = carla.Transform(carla.Location(x=189.740814, y=-90.026948, z=0.300000), carla.Rotation(pitch=0.000000, yaw=90, roll=0.000000)) # For Town 5
     obs = carla.Transform(carla.Location(x=100.0, y=188, z=0.300000), carla.Rotation(pitch=0.000000, yaw=180, roll=0.000000)) # For Town 5
     # obs = carla.Transform(carla.Location(x=525, y=-17.5, z=0.300000), carla.Rotation(pitch=0.000000, yaw=180, roll=0.000000))
-    # end_point = carla.Transform(carla.Location(x=-99.3, y=189, z=0.300000)) # Town 5
-    end_point = carla.Transform(carla.Location(x=-0, y=-17.5, z=0.300000)) # Town 6
+    end_point = carla.Transform(carla.Location(x=-99.3, y=189, z=0.300000)) # Town 5
+    # end_point = carla.Transform(carla.Location(x=-0, y=-17.5, z=0.300000)) # Town 6
 
     #Generate Global Path Waypoints
     dao = GlobalRoutePlannerDAO(world.get_map(), 3)   

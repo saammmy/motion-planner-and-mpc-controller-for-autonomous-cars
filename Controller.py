@@ -167,14 +167,14 @@ class inputs:
 
 class MPC:
     def __init__(self, vehicle, world, global_x, global_y, dt = 0.2, prediction_horizon = 8, control_horizon = 1):
-        self.w_cte = 0.05 #0.05
+        self.w_cte = 10.0 #0.05
         self.w_eyaw = 60.0 #60.0
         self.w_dacc = 2500 #2500.0
         self.w_dstr = 1000 #1000.0
         self.w_acc = 1.0 #1.0
         self.w_str = 1.0 #1.0
-        self.w_vel = 10.0 #5.0  
-        self.w_dvel = 200.0 #200.0
+        self.w_vel = 5.0 #5.0  
+        self.w_dvel = 100.0 #200.0
 
         self.dt = dt
         self.prediction_horizon = prediction_horizon
@@ -231,7 +231,7 @@ class MPC:
         if not os.path.exists(self.log_graph_path):
             os.makedirs(self.log_graph_path)
         else:
-            shutil.rmtree(self.log_graph_path + "/", ignore_errors=True)
+            shutil.rmtree(self.log_graph_path + "/", ignore_errors=False)
         self.graph_creator = SummaryWriter(self.log_graph_path)
         self.start_time = round(time.time(),2)
 
@@ -261,7 +261,7 @@ class MPC:
                 t = round(time.time(),2) - self.start_time
                 str = control_inputs[itr+self.prediction_horizon]
                 acc = control_inputs[itr]
-            future_v.append(next_state.v)
+            future_v.append(ms_to_mph(next_state.v))
         self.graph_creator.add_scalar("Steering Angle (Degree)",str*180/np.pi, global_step=t)
         self.graph_creator.add_scalars("Velocity (mph)",{"Velocity Predicted by MPC": ms_to_mph(v), "Velocity Proposed by Local Planner": ms_to_mph(desv), "Current Velocity in CARLA": ms_to_mph(self.vehicle_state.v), "Final Goal Speed": ms_to_mph(self.final_speed)},global_step=t)
         self.graph_creator.add_scalars("Acceleration",{"Acceleration Predicted by MPC":self.prev_pred_acc, "Carla Acceleration":realacc}, global_step=t)
@@ -271,7 +271,7 @@ class MPC:
         print("Time: ",t)
         self.prev_pred_acc = acc
 
-        # print("MPC Future Velocity: ", future_v)
+        print("MPC Future Velocity: ", future_v)
 
     def convert_input_to_carla(self, str_angle, target_acc):
         self.steering_angle = str_angle / self.str_bounds[1]
@@ -412,7 +412,7 @@ class MPC:
     def get_costs(self,curr_state, next_state, control_inputs, itr):
         cost_cte = self.w_cte*(next_state.cte)
         cost_eyaw = self.w_eyaw*(next_state.eyaw)
-        cost_vel = self.w_vel * (next_state.v - self.waypoints[3,itr])**2 #Checking with final value
+        cost_vel = self.w_vel * (next_state.v - self.waypoints[3,-1])**2 #Checking with final value
         cost_thr = self.w_acc*(control_inputs[itr])**2
         cost_str = self.w_str*(control_inputs[itr+self.prediction_horizon])**2
         cost_dvel = self.w_dvel*(next_state.v - curr_state.v)**2
