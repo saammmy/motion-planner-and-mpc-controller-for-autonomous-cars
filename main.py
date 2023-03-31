@@ -13,6 +13,7 @@ import time
 from Controller import MPC
 from utils import *
 from params import *
+import logging
 
 try:
     sys.path.append(glob.glob('../carla/dist/carla-*%d.%d-%s.egg' % (
@@ -27,6 +28,8 @@ except IndexError:
     pass
 
 import carla
+from carla import VehicleLightState as vls
+
 from agents.navigation.global_route_planner import GlobalRoutePlanner
 from agents.navigation.global_route_planner_dao import GlobalRoutePlannerDAO
 
@@ -41,10 +44,10 @@ def preprocess(waypoints):
     waypoints_ = []
     i =0
     while i< len(waypoints)-1:
-        if distance(waypoints[i][0],waypoints[i+1][0]) > 2:
+        if distance(waypoints[i][0],waypoints[i+1][0]) > 10:
             waypoints_.append(waypoints[i][0])
         i += 1
-    if distance(waypoints[-1][0],waypoints[-2][0]) > 2:
+    if distance(waypoints[-1][0],waypoints[-2][0]) > 10:
             waypoints_.append(waypoints[-1][0])
     return waypoints_
 
@@ -86,7 +89,8 @@ if __name__ == "__main__":
     client.set_timeout(10.0)
     world = client.load_world(TOWN)
     spawn_points = world.get_map().get_spawn_points()
-
+    trafficManager = client.get_trafficmanager()
+    tm_port = trafficManager.get_port()
     if RANDOM_POINT:
         start_point = random.choice(spawn_points) 
         end_point = random.choice(spawn_points)
@@ -95,6 +99,8 @@ if __name__ == "__main__":
         end_point = carla.Transform(carla.Location(x=END_X, y=END_Y, z=0.3))
 
     obstacle1 = carla.Transform(carla.Location(x=OBS1_X, y=OBS1_Y, z=0.3), carla.Rotation(pitch=0.0, yaw=OBS1_YAW, roll=0.0))
+    obstacle2 = carla.Transform(carla.Location(x=OBS2_X, y=OBS2_Y, z=0.3), carla.Rotation(pitch=0.0, yaw=OBS2_YAW, roll=0.0))
+    obs = [obstacle1, obstacle2]
 
     if SYNCHRONOUS_MODE:
         settings = world.get_settings()
@@ -107,16 +113,19 @@ if __name__ == "__main__":
     spawn_points = world.get_map().get_spawn_points()
 
     #Generate Global Path Waypoints
-    dao = GlobalRoutePlannerDAO(world.get_map(), 3)   
+    s1 = time.time()
+    dao = GlobalRoutePlannerDAO(world.get_map(), 10)   
     grp = GlobalRoutePlanner(dao)
     grp.setup() 
     waypoints_ = grp.trace_route(start_point.location, end_point.location)
     waypoints_ = preprocess(waypoints_)
-    vehicles = []
+    obstacles = []
     # Generate refrence path using spline fitting on waypoints.
     global_x = [i.transform.location.x for i in waypoints_]
     global_y = [i.transform.location.y for i in waypoints_]
+    e2 = time.time()
     sp = Spline2D(global_x, global_y)
+    e1 = time.time()
     s = np.arange(0, sp.s[-1], 0.5)
     rx, ry, ryaw, rk = [], [], [], []
     for i_s in s:
@@ -125,16 +134,38 @@ if __name__ == "__main__":
         ry.append(iy)
         ryaw.append(sp.calc_yaw(i_s))
         rk.append(sp.calc_curvature(i_s))
+    e3 = time.time()
+
+    # print(e3-e1)
+    # print(e2-s1)
+    # print(e1-e2)
     # Spawn ego vehicle
     blueprint_library = world.get_blueprint_library()
     vehicle_bp = random.choice(blueprint_library.filter('model3'))
     Ego = world.spawn_actor(vehicle_bp,start_point)
     actors.append(Ego)
 
+    SpawnActor = carla.command.SpawnActor
+    SetAutopilot = carla.command.SetAutopilot
+    SetVehicleLightState = carla.command.SetVehicleLightState
+    FutureActor = carla.command.FutureActor
     if SPAWN_OBSTACLE:
-        obs_veh = world.spawn_actor(vehicle_bp,obstacle1)
-        actors.append(obs_veh)
-        vehicles.append(obs_veh)
+        light_state = vls.NONE
+        if True:
+            light_state = vls.Position | vls.LowBeam | vls.LowBeam
+        for ob in obs:
+            obstacles.append(SpawnActor(vehicle_bp, ob)
+            .then(SetAutopilot(FutureActor, True, trafficManager.get_port()))
+            .then(SetVehicleLightState(FutureActor, light_state)))
+
+    vehicles_list = []
+    for response in client.apply_batch_sync(obstacles, SYNCHRONOUS_MODE):
+        if response.error:
+            logging.error(response.error)
+        else:
+            vehicles_list.append(response.actor_id)
+
+
 
     # Setup parameters
     reached_goal = False
@@ -143,49 +174,49 @@ if __name__ == "__main__":
 
     # Setup Behavior Planner
     local_planner = LocalPlanner(world,sp,s,rx,ry,ryaw,rk)
-    behavior_planner = BehaviorPlanner(local_planner)
+    behavior_planner = BehaviorPlanner(local_planner, Ego)
     controller = MPC(Ego, world, global_x, global_y)
 
-    if SPAWN_OBSTACLE:
-        pass
-        # obs_veh.set_target_velocity(target_velocity)
 
     if SYNCHRONOUS_MODE:
         world.tick()
     
     spectator = world.get_spectator()
     spectator.set_transform(Ego.get_transform())
+
+    obstacles = world.get_actors().filter("*vehicle*")
+
     while  not reached_goal:
-        # timestamp = world.get_snapshot()
-        # print(f"elapsed_seconds: {timestamp.elapsed_seconds}, delta_seconds: {timestamp.delta_seconds}")
+        timestamp = world.get_snapshot()
+        print("-------------------------------------------------")
+        # print("CARLA TIME STAMP: ", round(timestamp.elapsed_seconds,4))
+        # print("     Synchronous Mode: ", SYNCHRONOUS_MODE)
+        # print("     Carla Delta Time: ",round(timestamp.delta_seconds,4))
+
         s = time.time()
         current_state = get_current_states(Ego, local_planner)
         e1 = time.time()
-    
-        behavior, target_s, target_d = behavior_planner.get_next_behavior(current_state, lookahead_path= 10 + current_state["speed"]*3, vehicles=vehicles)
-        # print("EGo Speed: ", current_state["speed"])
-        # print("Current State", state)
+
+        behavior, target_s, target_d, target_vel = behavior_planner.get_next_behavior(current_state, obstacles=obstacles )
+
         if behavior == "SAFETY_STOP":
             print("Applying Emergency Brake")
             Ego.apply_control((carla.VehicleControl(throttle=0, brake=1)))
             continue
-
-        x, y, yaw, v, final_speed = local_planner.run_step(current_state, target_s, target_d, behavior) 
-        e2 = time.time()
-        # draw_trajectory(world, x,y, current_state["z"]+0.5)
+        
+        x, y, yaw, v, final_speed = local_planner.run_step(current_state, target_s, target_d, behavior, target_vel) 
         e3 = time.time()
-        controller.update_waypoints(x, y, yaw, v, current_state, final_speed)
-        # print("Current Velocity for Local planner", v[0])
-        print("Current Velocity of vehicle", round(ms_to_mph(current_state["speed"]),2))
-        # print("CUrrent Acceleration of Ego: ", round(current_state["long_acc"],2))
-        # print("X: ", current_state["x"])
-        # print("Y: ", current_state["y"])
-        controller.run_step()
         e4 = time.time()
+        controller.update_waypoints(x, y, yaw, v, current_state, final_speed)
+        controller.run_step()
+        e5 = time.time()
+        print("     BEHAVIOR: ", behavior)
         if CONTROL_HORIZON == 1:
-            print("TOTAL TIME: ", round(e4-s,4))
-        # print("Get State time: ", round(e1-s,3))
-        # print("Local Planner Time: ", round(e2-e1,3))
-        # print("Drawing Time: ", round(e3-e2,3))
-        # print("Controller Time: ", round(e4-e3,3))
-        print("---------------------------")
+            pass
+            print("     Time to run one code loop: ", round(e5-s,4))
+        # print("     Get State time: ", round(e1-s,3))
+        # print("     Local Planner Time: ", round(e2-e1,3))
+        # print("     Drawing Time: ", round(e3-e2,3))
+        # print("     Controller Time: ", round(e4-e3,3))
+        # print("     Desired Speed: ", round(ms_to_mph(final_speed),2))
+        # print("     Current speed of vehicle: ", round(ms_to_mph(current_state["speed"]),2))

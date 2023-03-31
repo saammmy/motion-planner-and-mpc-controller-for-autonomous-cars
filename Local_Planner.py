@@ -189,14 +189,11 @@ class LocalPlanner:
         return np.cross(a,b)
         
     def cartesian_to_frenet(self, x, y):
-
         dx = [x - ix for ix in self.x]
         dy = [y - iy for iy in self.y]
 
         d = np.min(np.hypot(dx,dy))
-
         closest_index = np.argmin(np.hypot(dx,dy))
-
         map_vec = [self.x[closest_index+1] - self.x[closest_index], self.y[closest_index+1] - self.y[closest_index]]
 
         ego_vec = [x - self.x[closest_index], y - self.y[closest_index]]
@@ -338,55 +335,46 @@ class LocalPlanner:
         return goal_sets
 
 
-    def run_step(self,current_state, target_s, target_d, behavior):
+    def run_step(self,current_state, target_s, target_d, behavior, target_speed):
 
         frenet_paths = []
-        target_speed = current_state["target_speed"]
 
         curr_speed = current_state["speed"]
 
         req_accel = (target_speed - curr_speed)/self.planning_time
 
         if req_accel > self.max_acceleration:
-            print("Breaching maximum acceleation limits")
+            # print("Breaching maximum acceleation limits")
             req_accel = self.max_acceleration
 
         if req_accel < self.min_acceleration:
-            print("Breaching minimum acceleation limits")
+            # print("Breaching minimum acceleation limits")
             req_accel = self.min_acceleration
 
         achievable_speed = curr_speed + req_accel*self.planning_time
         
         # Calculating max curvature in look ahead distance
         current_s = round(current_state["s"])
-        next_s = round(current_s + current_state["speed"]*1.0)
-        lookahed_s = round(current_s + max(30 , current_state["speed"]*self.curvature_lookahed_time))
+        next_s = min(round(current_s + current_state["speed"]*1.0),self.s[-1])
+        lookahed_s = min(round(current_s + max(30 , current_state["speed"]*self.curvature_lookahed_time)),self.s[-1])
         next_s_index = np.where(self.s == next_s)[0][0]
         lookahed_s_index = np.where(self.s == lookahed_s)[0][0]
         global_curvature = self.curvature[next_s_index:lookahed_s_index]
-        max_curature = max(global_curvature)
+        if len(global_curvature) == 0:
+            max_curature = 0.000001
+        else:  
+            max_curature = max(global_curvature)
 
         superelevation = 6
         radius_feet = m_to_feet(1/max_curature)
         
-        if behavior!="lane_change":
-            if achievable_speed < mph_to_ms(50):
+        if achievable_speed < mph_to_ms(50):
                 curvature_speed = 0.5*(-0.015*radius_feet+((.015*radius_feet)**2 + 4*radius_feet*((15*superelevation/100) + 2.85))**(1/2)) * 0.44704
-            else:
-                curvature_speed = 0.5*(-0.03*radius_feet+((.03*radius_feet)**2 + 4*radius_feet*((15*superelevation/100) + 3.6))**(1/2)) * 0.44704
         else:
-            curvature_speed = target_speed
-        
-        # curvature_speed = 200
-        
-        print("Target Speed set by Behavior Planner: ",round(ms_to_mph(target_speed),2))
-        print("Achievable Target Speed set by Behavior Planner: ", round(ms_to_mph(achievable_speed),2))
-        print("Speed limit due to Curvature: ",  round(ms_to_mph(curvature_speed),2))
-        
+                curvature_speed = 0.5*(-0.03*radius_feet+((.03*radius_feet)**2 + 4*radius_feet*((15*superelevation/100) + 3.6))**(1/2)) * 0.44704
+            
         final_speed = min(achievable_speed, curvature_speed, target_speed)
-
-        print("Final Speed: ",round(ms_to_mph(final_speed),2))
-        
+       
         fp = FrenetPath()
         fp.dt = self.dt
         fp.T = self.planning_time
@@ -398,8 +386,14 @@ class LocalPlanner:
         fp.d_d = [self.lat_traj_frenet.calc_vel(t) for t in fp.t]
         fp.d_dd = [self.lat_traj_frenet.calc_acc(t) for t in fp.t]
         fp.d_ddd = [self.lat_traj_frenet.calc_jerk(t) for t in fp.t]
-
-        self.lon_traj_frenet = QuarticPolynomial(current_state["s"],current_state["long_vel"], current_state["long_acc"],final_speed,0,self.planning_time)
+        target_s = None
+        if target_s!= None:
+            # target_s = max(10,current_s + current_state["speed"]*1.6 + 0.5*current_state["long_acc"]*1.6*1.6)
+            target_s = min(target_s,self.s[-1])
+            print("Tailgate")
+            self.lon_traj_frenet = QuinticPolynomial(current_state["s"],current_state["long_vel"], current_state["long_acc"],target_s,target_speed,0,self.planning_time)
+        else:
+            self.lon_traj_frenet = QuarticPolynomial(current_state["s"],current_state["long_vel"], current_state["long_acc"],final_speed,0,self.planning_time)
 
         fp.s = [self.lon_traj_frenet.calc_pos(t) for t in fp.t]
         fp.s_d = [self.lon_traj_frenet.calc_vel(t) for t in fp.t] 
@@ -407,7 +401,9 @@ class LocalPlanner:
         fp.s_ddd = [self.lon_traj_frenet.calc_jerk(t) for t in fp.t]
 
         frenet_paths.append(fp)
-
+        # print(fp.s)
+        # print(current_state["s"])
+        # print(self.s[-1])
         frenet_paths = self.calc_global_paths(frenet_paths)
 
         opt_traj = frenet_paths[0]
@@ -420,6 +416,10 @@ class LocalPlanner:
         v, a = self.velocity_generator.plan(current_state["speed"], final_speed, ds)
         x,y,yaw = opt_traj.x , opt_traj.y, opt_traj.yaw
         
+        # print("Target Speed set by Behavior Planner: ",round(ms_to_mph(target_speed),2))
+        # print("Achievable Target Speed set by Behavior Planner: ", round(ms_to_mph(achievable_speed),2))
+        # print("Speed limit due to Curvature: ",  round(ms_to_mph(curvature_speed),2))
+        # print("Final Speed: ",round(ms_to_mph(final_speed),2))
         # plot_trajectory(self.trajectory_plot ,opt_traj.t, opt_traj.x, opt_traj.y, v*np.ones((len(opt_traj.x))), a*np.ones((len(opt_traj.x))), opt_traj.j)
         return x, y, yaw, v, final_speed
 
