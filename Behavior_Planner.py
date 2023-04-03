@@ -3,9 +3,10 @@ import Local_Planner
 from misc import get_speed
 import numpy as np
 from  utils import *
+from params import *
 
 def future_s(speed, acc, t):
-    return speed*t + 0.5*acc*t**2
+    return speed*t + 0.5*max(min(acc,MAX_ACC),-5)*t**2
 
 def time_to_collision(relative_speed, delta_s):
     return delta_s/relative_speed
@@ -39,10 +40,12 @@ class BehaviorPlanner:
         self.current_behavior = "FOLLOW_LANE"
         self.local_planner = local_planner
         self.Ego = Ego
-        self.lookahead_time = 5
+        self.lookahead_time = 6
         self.react_to_collision = 8
-        self.overtake_lookahead = 3
+        self.overtake_lookahead_time = 2.6
         self.current_d = 0
+        self.speed = 0
+        self.was_tailgate = False
 
     def assignLane(self, d, lane_width=3.5):
 
@@ -56,8 +59,9 @@ class BehaviorPlanner:
             return None
         
     def get_next_behavior(self,current_state,obstacles):
-        target_speed = current_state["target_speed"]
+        self.speed = current_state["target_speed"]
         target_s = None
+        self.current_behavior = "FOLLOW LANE"
 
         left_lane_vehicles= []
         right_lane_vehicles = []
@@ -69,7 +73,8 @@ class BehaviorPlanner:
         semi_lane_width = 1.75
         ego_lane = self.assignLane(current_state["d"])
         
-        lookahead = max(30,future_s(current_state["speed"], current_state["long_acc"], self.lookahead_time))
+        lookahead = min(max(50,future_s(current_state["speed"], current_state["long_acc"], self.lookahead_time)),200)
+        print("     Lookahead: ", lookahead)
 
         for obstacle in obstacles:
             if(obstacle.id == self.Ego.id):
@@ -80,14 +85,21 @@ class BehaviorPlanner:
                 lane = self.assignLane(d)
                 # print("     OBSTACLE DETECTED: ", obstacle.id)
                 active_obstacles.append(Obstacle(obstacle, lane, s, d, delta_s))
+        
+        print("     No of Active Obstacles: ",len(active_obstacles))
 
-        self.current_behavior = "FOLLOW LANE"
+        
         for obstacle in active_obstacles:
             if obstacle.lane == ego_lane:
                 relative_vel = current_state["speed"] - obstacle.vel
                 # collision_time = time_to_collision(relative_vel, obstacle.delta_s)
-                overtake_lookahead = max(current_state["s"]+15,current_state["s"] + future_s(current_state["speed"], current_state["long_acc"], self.overtake_lookahead))
-                if  overtake_lookahead > obstacle.s:
+                overtake_lookahead = min(max(25, future_s(current_state["speed"], current_state["long_acc"], self.overtake_lookahead_time)), 100)
+                print("     Overtake Lookahead: ", overtake_lookahead)
+                overtake_delta_s = obstacle.s - current_state["s"]
+
+                if overtake_delta_s<10:
+                    self.current_behavior = "EMERGENCY BRAKE"
+                elif 0 < overtake_delta_s < overtake_lookahead:
                     # Entering Overtake and Tailgate Check
                     self.current_behavior = "OVERTAKE"
                     self.current_d = -3.5
@@ -96,12 +108,22 @@ class BehaviorPlanner:
                             if obs.id != obstacle.id:
                                 if obs.lane == 1:
                                     self.current_behavior = "TAILGATE"
-                                    target_speed = obstacle.vel
+                                    self.tailgate_obs = obstacle
+                                    self.was_tailgate = True
+                                    self.speed = obstacle.vel
                                     target_s = obstacle.s - 8.0
                                     self.current_d = 0
+                                    
                                     break
-                        
-        return self.current_behavior, target_s, self.current_d, target_speed
+
+        if len(active_obstacles) == 0 or self.current_behavior=="OVERTAKE":
+            self.was_tailgate = False
+            self.speed = current_state["target_speed"]
+
+        if self.was_tailgate == True:
+            self.speed = obstacle.vel
+
+        return self.current_behavior, target_s, self.current_d, self.speed
             
 
 

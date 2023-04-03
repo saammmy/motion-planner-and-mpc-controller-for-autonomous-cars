@@ -341,7 +341,10 @@ class MPC:
                     if delta<delta_min:
                         delta_min = delta
                         throttle = key
-                self.throttle = min(self.throttle+0.1, throttle)
+                if throttle == 0.25:
+                    self.throttle -= 0.05
+                else:
+                    self.throttle = min(self.throttle+0.1, throttle)
                 self.brake = 0
 
     def update_vehicle_state(self, x=0, y=0, yaw=0, v=0, a=0, z=0, cte=0, eyaw=0):

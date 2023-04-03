@@ -44,10 +44,10 @@ def preprocess(waypoints):
     waypoints_ = []
     i =0
     while i< len(waypoints)-1:
-        if distance(waypoints[i][0],waypoints[i+1][0]) > 10:
+        if distance(waypoints[i][0],waypoints[i+1][0]) > 2:
             waypoints_.append(waypoints[i][0])
         i += 1
-    if distance(waypoints[-1][0],waypoints[-2][0]) > 10:
+    if distance(waypoints[-1][0],waypoints[-2][0]) > 2:
             waypoints_.append(waypoints[-1][0])
     return waypoints_
 
@@ -98,9 +98,6 @@ if __name__ == "__main__":
         start_point = carla.Transform(carla.Location(x=START_X, y=START_Y, z=0.3), carla.Rotation(pitch=0.0, yaw=START_YAW, roll=0.0))
         end_point = carla.Transform(carla.Location(x=END_X, y=END_Y, z=0.3))
 
-    obstacle1 = carla.Transform(carla.Location(x=OBS1_X, y=OBS1_Y, z=0.3), carla.Rotation(pitch=0.0, yaw=OBS1_YAW, roll=0.0))
-    obstacle2 = carla.Transform(carla.Location(x=OBS2_X, y=OBS2_Y, z=0.3), carla.Rotation(pitch=0.0, yaw=OBS2_YAW, roll=0.0))
-    obs = [obstacle1, obstacle2]
 
     if SYNCHRONOUS_MODE:
         settings = world.get_settings()
@@ -114,7 +111,7 @@ if __name__ == "__main__":
 
     #Generate Global Path Waypoints
     s1 = time.time()
-    dao = GlobalRoutePlannerDAO(world.get_map(), 10)   
+    dao = GlobalRoutePlannerDAO(world.get_map(), 3)   
     grp = GlobalRoutePlanner(dao)
     grp.setup() 
     waypoints_ = grp.trace_route(start_point.location, end_point.location)
@@ -150,6 +147,9 @@ if __name__ == "__main__":
     SetVehicleLightState = carla.command.SetVehicleLightState
     FutureActor = carla.command.FutureActor
     if SPAWN_OBSTACLE:
+        obstacle1 = carla.Transform(carla.Location(x=OBS1_X, y=OBS1_Y, z=0.3), carla.Rotation(pitch=0.0, yaw=OBS1_YAW, roll=0.0))
+        obstacle2 = carla.Transform(carla.Location(x=OBS2_X, y=OBS2_Y, z=0.3), carla.Rotation(pitch=0.0, yaw=OBS2_YAW, roll=0.0))
+        obs = [obstacle1, obstacle2]
         light_state = vls.NONE
         if True:
             light_state = vls.Position | vls.LowBeam | vls.LowBeam
@@ -189,17 +189,21 @@ if __name__ == "__main__":
     while  not reached_goal:
         timestamp = world.get_snapshot()
         print("-------------------------------------------------")
-        # print("CARLA TIME STAMP: ", round(timestamp.elapsed_seconds,4))
-        # print("     Synchronous Mode: ", SYNCHRONOUS_MODE)
-        # print("     Carla Delta Time: ",round(timestamp.delta_seconds,4))
+        print("CARLA TIME STAMP: ", round(timestamp.elapsed_seconds,4))
+        print("     Synchronous Mode: ", SYNCHRONOUS_MODE)
+        print("     Carla Delta Time: ",round(timestamp.delta_seconds,4))
 
         s = time.time()
         current_state = get_current_states(Ego, local_planner)
         e1 = time.time()
 
         behavior, target_s, target_d, target_vel = behavior_planner.get_next_behavior(current_state, obstacles=obstacles )
+        # behavior = "FOLLOW_LANE"
+        # target_s = None
+        # target_d = 0
+        # target_vel = current_state["target_speed"]
 
-        if behavior == "SAFETY_STOP":
+        if behavior == "EMERGENCY_BRAKE":
             print("Applying Emergency Brake")
             Ego.apply_control((carla.VehicleControl(throttle=0, brake=1)))
             continue
@@ -213,10 +217,10 @@ if __name__ == "__main__":
         print("     BEHAVIOR: ", behavior)
         if CONTROL_HORIZON == 1:
             pass
-            print("     Time to run one code loop: ", round(e5-s,4))
+            # print("     Time to run one code loop: ", round(e5-s,4))
         # print("     Get State time: ", round(e1-s,3))
         # print("     Local Planner Time: ", round(e2-e1,3))
         # print("     Drawing Time: ", round(e3-e2,3))
         # print("     Controller Time: ", round(e4-e3,3))
-        # print("     Desired Speed: ", round(ms_to_mph(final_speed),2))
-        # print("     Current speed of vehicle: ", round(ms_to_mph(current_state["speed"]),2))
+        print("     Desired Speed: ", round(ms_to_mph(final_speed),2))
+        print("     Current speed of vehicle: ", round(ms_to_mph(current_state["speed"]),2))
