@@ -51,7 +51,7 @@ def preprocess(waypoints):
             waypoints_.append(waypoints[-1][0])
     return waypoints_
 
-def get_current_states(Ego, local_planner):
+def get_current_states(Ego, refrence_path):
     ego_vehicle_loc = Ego.get_location()
     # ego_wpt = world.get_map().get_waypoint(ego_vehicle_loc)
     ego_vel = Ego.get_velocity()
@@ -62,7 +62,7 @@ def get_current_states(Ego, local_planner):
     transform_matrix = np.linalg.inv(ego_transform.get_matrix())
     ego_vel = transform_matrix @ np.array([ego_vel.x, ego_vel.y, ego_vel.z, 0.0])
     ego_acc = transform_matrix @ np.array([ego_acc.x, ego_acc.y, ego_acc.z, 0.0])
-    s,d = local_planner.cartesian_to_frenet(Ego.get_transform().location.x, Ego.get_transform().location.y) #None, None
+    s,d = refrence_path.cartesian_to_frenet(Ego.get_transform().location.x, Ego.get_transform().location.y) #None, None
     current_state= {
         "x": round(Ego.get_transform().location.x,2),
         "y": round(Ego.get_transform().location.y,2),
@@ -78,8 +78,7 @@ def get_current_states(Ego, local_planner):
         "s": s,
         "d":d,
         "target_speed": kmph_to_ms(Ego.get_speed_limit()),
-        "total_acc": ego_acc1,
-        "gandu": False
+        "total_acc": ego_acc1
     }
     return current_state
 
@@ -176,7 +175,7 @@ if __name__ == "__main__":
     time.sleep(1)
 
     # Setup Behavior Planner
-    local_planner = LocalPlanner(world,sp,s,rx,ry,ryaw,rk)
+    local_planner = LocalPlanner(world)
     behavior_planner = BehaviorPlanner(local_planner, Ego)
     controller = MPC(Ego, world, global_x, global_y)
     mission_planner = MissionPlanner(world, Ego, start_point, end_point)
@@ -196,14 +195,19 @@ if __name__ == "__main__":
         # print("     Carla Delta Time: ",round(timestamp.delta_seconds,4))
 
         s = time.time()
-        current_state = get_current_states(Ego, local_planner)
+        current_state = get_current_states(Ego, mission_planner.refrence_path_local)
         e1 = time.time()
 
+
+        # print(current_state["s"])
+
         if mission_planner.is_reroute(current_state):
-            local_path, current_state_testwe = mission_planner.get_path_and_new_state()
-            print(current_state["gandu"])
+            print("Rerouting Till:", mission_planner.s_future)
+            print(mission_planner.s_last_wrt_global)
+            print(mission_planner.refrence_path_local.s)
+            local_path = mission_planner.get_path_and_new_state()
         
-        print(current_state["s"])
+        # print(current_state["s"])
         behavior, target_s, target_d, target_vel = behavior_planner.get_next_behavior(current_state, obstacles=obstacles )
         # behavior = "FOLLOW_LANE"
         # target_s = None
@@ -215,7 +219,7 @@ if __name__ == "__main__":
             Ego.apply_control((carla.VehicleControl(throttle=0, brake=1)))
             continue
         
-        x, y, yaw, v, final_speed = local_planner.run_step(current_state, target_s, target_d, behavior, target_vel) 
+        x, y, yaw, v, final_speed = local_planner.run_step(mission_planner.refrence_path_local, current_state, target_s, target_d, behavior, target_vel) 
         e3 = time.time()
         e4 = time.time()
         controller.update_waypoints(x, y, yaw, v, current_state, final_speed)

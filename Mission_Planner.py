@@ -53,7 +53,6 @@ class RefrencePath:
     def cartesian_to_frenet(self, x, y):
         dx = [x - ix for ix in self.x]
         dy = [y - iy for iy in self.y]
-        # print(np.hypot(dx,dy))
         d = np.min(np.hypot(dx,dy))
         closest_index = np.argmin(np.hypot(dx,dy))
         map_vec = [self.x[closest_index+1] - self.x[closest_index], self.y[closest_index+1] - self.y[closest_index]]
@@ -153,7 +152,9 @@ class MissionPlanner:
             path.direction.append(waypoint[1])
 
         path.refrencePath = Spline2D(path.x, path.y)
-
+        path.x = []
+        path.y = []
+        path.direction = []
         path.s = np.arange(0, path.refrencePath.s[-1], path.ds)
 
         for i_s in path.s:
@@ -186,7 +187,7 @@ class MissionPlanner:
         s_current = self.current_state["s"]
         
         s_future_pred = s_current + future_s(self.current_state["speed"], self.current_state["long_acc"], PLANNING_DURATION+0.5) 
-
+        print(self.s_future - s_future_pred)
         if self.s_future - s_future_pred < 0:
             self.re_route(self.current_state["s"], self.current_state["d"]) 
             self.s_last_wrt_global += self.current_state["s"]
@@ -194,10 +195,8 @@ class MissionPlanner:
         
     def get_path_and_new_state(self):
         path = self.refrence_path_local
-        print(path.s)
         self.current_state["s"],self.current_state["d"] = self.refrence_path_local.cartesian_to_frenet(self.current_state["x"], self.current_state["y"])
-        self.current_state["gandu"] = True
-        return path, self.current_state
+        return path
 
         
     

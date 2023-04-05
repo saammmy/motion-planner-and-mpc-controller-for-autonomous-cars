@@ -145,17 +145,12 @@ class QuarticPolynomial:
 
 
 class LocalPlanner:
-    def __init__(self,world,sp,s,x,y, yaw, curvature):
+    def __init__(self,world):
         self.world = world
         self.planning_time = PLANNING_DURATION #seconds
 
         self.dt = SAMPLE_TIME
-        self.refrence_path = sp
-        self.s = s
-        self.x = x
-        self.y = y
-        self.yaw = yaw
-        self.curvature = curvature
+        self.refrence_path = None
         self.lon_traj_frenet = None
         self.lon_traj_frenet = None
         self.traj_cartesian = None
@@ -275,8 +270,8 @@ class LocalPlanner:
         # transform trajectory from Frenet to Global
         for fp in fplist:
 
-            xy = [self.refrence_path.calc_position(s_i) for s_i in fp.s]
-            ref_yaw = [ self.refrence_path.calc_yaw(s_i) for s_i in fp.s]
+            xy = [self.refrence_path.refrencePath.calc_position(s_i) for s_i in fp.s]
+            ref_yaw = [ self.refrence_path.refrencePath.calc_yaw(s_i) for s_i in fp.s]
 
             for i in range(len(fp.s)):
                 _d = fp.d[i]
@@ -335,8 +330,9 @@ class LocalPlanner:
         return goal_sets
 
 
-    def run_step(self,current_state, target_s, target_d, behavior, target_speed):
+    def run_step(self, refrence_path, current_state, target_s, target_d, behavior, target_speed):
 
+        self.refrence_path = refrence_path
         frenet_paths = []
 
         curr_speed = current_state["speed"]
@@ -355,11 +351,11 @@ class LocalPlanner:
         
         # Calculating max curvature in look ahead distance
         current_s = round(current_state["s"])
-        next_s = min(round(current_s + current_state["speed"]*1.0),self.s[-1])
-        lookahed_s = min(round(current_s + max(30 , current_state["speed"]*self.curvature_lookahed_time)),self.s[-1])
-        next_s_index = np.where(self.s == next_s)[0][0]
-        lookahed_s_index = np.where(self.s == lookahed_s)[0][0]
-        global_curvature = self.curvature[next_s_index:lookahed_s_index]
+        next_s = min(round(current_s + current_state["speed"]*1.0),self.refrence_path.s[-1])
+        lookahed_s = min(round(current_s + max(30 , current_state["speed"]*self.curvature_lookahed_time)),self.refrence_path.s[-1])
+        next_s_index = np.where(self.refrence_path.s == next_s)[0][0]
+        lookahed_s_index = np.where(self.refrence_path.s == lookahed_s)[0][0]
+        global_curvature = self.refrence_path.curv[next_s_index:lookahed_s_index]
         if len(global_curvature) == 0:
             max_curature = 0.000001
         else:  
@@ -389,8 +385,7 @@ class LocalPlanner:
         target_s = None
         if target_s!= None:
             # target_s = max(10,current_s + current_state["speed"]*1.6 + 0.5*current_state["long_acc"]*1.6*1.6)
-            target_s = min(target_s,self.s[-1])
-            print("Tailgate")
+            target_s = min(target_s,refrence_path.s[-1])
             self.lon_traj_frenet = QuinticPolynomial(current_state["s"],current_state["long_vel"], current_state["long_acc"],target_s,target_speed,0,self.planning_time)
         else:
             self.lon_traj_frenet = QuarticPolynomial(current_state["s"],current_state["long_vel"], current_state["long_acc"],final_speed,0,self.planning_time)
