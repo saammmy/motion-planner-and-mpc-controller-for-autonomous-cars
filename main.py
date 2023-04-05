@@ -14,7 +14,7 @@ from Controller import MPC
 from utils import *
 from params import *
 import logging
-
+from Mission_Planner import MissionPlanner
 try:
     sys.path.append(glob.glob('../carla/dist/carla-*%d.%d-%s.egg' % (
         sys.version_info.major,
@@ -78,7 +78,8 @@ def get_current_states(Ego, local_planner):
         "s": s,
         "d":d,
         "target_speed": kmph_to_ms(Ego.get_speed_limit()),
-        "total_acc": ego_acc1
+        "total_acc": ego_acc1,
+        "gandu": False
     }
     return current_state
 
@@ -96,6 +97,7 @@ if __name__ == "__main__":
         end_point = random.choice(spawn_points)
     else:
         start_point = carla.Transform(carla.Location(x=START_X, y=START_Y, z=0.3), carla.Rotation(pitch=0.0, yaw=START_YAW, roll=0.0))
+        # start_point_temp = carla.Transform(carla.Location(x=START_X-50, y=START_Y-6, z=0.3), carla.Rotation(pitch=0.0, yaw=START_YAW, roll=0.0))
         end_point = carla.Transform(carla.Location(x=END_X, y=END_Y, z=0.3))
 
 
@@ -120,6 +122,7 @@ if __name__ == "__main__":
     # Generate refrence path using spline fitting on waypoints.
     global_x = [i.transform.location.x for i in waypoints_]
     global_y = [i.transform.location.y for i in waypoints_]
+
     e2 = time.time()
     sp = Spline2D(global_x, global_y)
     e1 = time.time()
@@ -176,7 +179,7 @@ if __name__ == "__main__":
     local_planner = LocalPlanner(world,sp,s,rx,ry,ryaw,rk)
     behavior_planner = BehaviorPlanner(local_planner, Ego)
     controller = MPC(Ego, world, global_x, global_y)
-
+    mission_planner = MissionPlanner(world, Ego, start_point, end_point)
 
     if SYNCHRONOUS_MODE:
         world.tick()
@@ -185,18 +188,22 @@ if __name__ == "__main__":
     spectator.set_transform(Ego.get_transform())
 
     obstacles = world.get_actors().filter("*vehicle*")
-
     while  not reached_goal:
         timestamp = world.get_snapshot()
-        print("-------------------------------------------------")
-        print("CARLA TIME STAMP: ", round(timestamp.elapsed_seconds,4))
-        print("     Synchronous Mode: ", SYNCHRONOUS_MODE)
-        print("     Carla Delta Time: ",round(timestamp.delta_seconds,4))
+        # print("-------------------------------------------------")
+        # print("CARLA TIME STAMP: ", round(timestamp.elapsed_seconds,4))
+        # print("     Synchronous Mode: ", SYNCHRONOUS_MODE)
+        # print("     Carla Delta Time: ",round(timestamp.delta_seconds,4))
 
         s = time.time()
         current_state = get_current_states(Ego, local_planner)
         e1 = time.time()
 
+        if mission_planner.is_reroute(current_state):
+            local_path, current_state_testwe = mission_planner.get_path_and_new_state()
+            print(current_state["gandu"])
+        
+        print(current_state["s"])
         behavior, target_s, target_d, target_vel = behavior_planner.get_next_behavior(current_state, obstacles=obstacles )
         # behavior = "FOLLOW_LANE"
         # target_s = None
@@ -204,7 +211,7 @@ if __name__ == "__main__":
         # target_vel = current_state["target_speed"]
 
         if behavior == "EMERGENCY_BRAKE":
-            print("Applying Emergency Brake")
+            # print("Applying Emergency Brake")
             Ego.apply_control((carla.VehicleControl(throttle=0, brake=1)))
             continue
         
@@ -214,7 +221,7 @@ if __name__ == "__main__":
         controller.update_waypoints(x, y, yaw, v, current_state, final_speed)
         controller.run_step()
         e5 = time.time()
-        print("     BEHAVIOR: ", behavior)
+        # print("     BEHAVIOR: ", behavior)
         if CONTROL_HORIZON == 1:
             pass
             # print("     Time to run one code loop: ", round(e5-s,4))
@@ -222,5 +229,5 @@ if __name__ == "__main__":
         # print("     Local Planner Time: ", round(e2-e1,3))
         # print("     Drawing Time: ", round(e3-e2,3))
         # print("     Controller Time: ", round(e4-e3,3))
-        print("     Desired Speed: ", round(ms_to_mph(final_speed),2))
-        print("     Current speed of vehicle: ", round(ms_to_mph(current_state["speed"]),2))
+        # print("     Desired Speed: ", round(ms_to_mph(final_speed),2))
+        # print("     Current speed of vehicle: ", round(ms_to_mph(current_state["speed"]),2))

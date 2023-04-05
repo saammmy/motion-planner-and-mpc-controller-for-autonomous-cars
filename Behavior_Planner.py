@@ -74,7 +74,7 @@ class BehaviorPlanner:
         ego_lane = self.assignLane(current_state["d"])
         
         lookahead = min(max(50,future_s(current_state["speed"], current_state["long_acc"], self.lookahead_time)),200)
-        print("     Lookahead: ", lookahead)
+        # print("     Lookahead: ", lookahead)
 
         for obstacle in obstacles:
             if(obstacle.id == self.Ego.id):
@@ -86,7 +86,7 @@ class BehaviorPlanner:
                 # print("     OBSTACLE DETECTED: ", obstacle.id)
                 active_obstacles.append(Obstacle(obstacle, lane, s, d, delta_s))
         
-        print("     No of Active Obstacles: ",len(active_obstacles))
+        # print("     No of Active Obstacles: ",len(active_obstacles))
 
         
         for obstacle in active_obstacles:
@@ -94,7 +94,7 @@ class BehaviorPlanner:
                 relative_vel = current_state["speed"] - obstacle.vel
                 # collision_time = time_to_collision(relative_vel, obstacle.delta_s)
                 overtake_lookahead = min(max(25, future_s(current_state["speed"], current_state["long_acc"], self.overtake_lookahead_time)), 100)
-                print("     Overtake Lookahead: ", overtake_lookahead)
+                # print("     Overtake Lookahead: ", overtake_lookahead)
                 overtake_delta_s = obstacle.s - current_state["s"]
 
                 if overtake_delta_s<10:
