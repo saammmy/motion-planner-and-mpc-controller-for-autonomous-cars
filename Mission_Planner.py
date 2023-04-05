@@ -118,7 +118,7 @@ class MissionPlanner:
 
     def get_start_end_carla_point(self, start_s, start_d):
         #Convert to cartesian based on global path
-        start_x, start_y = self.refrence_path_global.frenet_to_cartesian(start_s, start_d)
+        start_x, start_y = self.refrence_path_local.frenet_to_cartesian(start_s, start_d)
         goal_x, goal_y = self.refrence_path_global.frenet_to_cartesian(self.s_future, 0)
 
         start_point = carla.Transform(carla.Location(x=start_x, y=start_y))
@@ -128,7 +128,11 @@ class MissionPlanner:
     
     def initial_path(self, global_start_point, global_end_point):
         self.refrence_path_global = self.route(global_start_point, global_end_point)
-        start_point, end_point = self.get_start_end_carla_point(0, 0)
+        start_x, start_y = self.refrence_path_global.frenet_to_cartesian(0, 0)
+        goal_x, goal_y = self.refrence_path_global.frenet_to_cartesian(self.s_future, 0)
+
+        start_point = carla.Transform(carla.Location(x=start_x, y=start_y))
+        end_point = carla.Transform(carla.Location(x=goal_x, y=goal_y))
         self.refrence_path_local = self.route(start_point, end_point)
 
 
@@ -177,26 +181,19 @@ class MissionPlanner:
         s_total = start_s + self.s_last_wrt_global
         delta = min(max(LOCAL_GLOBAL_PLAN_MIN, LOCAL_GLOBAL_PLAN_MIN + future_s(self.current_state["speed"], self.current_state["long_acc"], PLANNING_DURATION)), LOCAL_GLOBAL_PLAN_MAX)
 
-        self.s_future = s_total + delta
+        self.s_future = min(s_total + delta, self.refrence_path_global.s[-1])
         start_point, end_point = self.get_start_end_carla_point(start_s, start_d)
         self.refrence_path_local = self.route(start_point, end_point)
+        self.s_last_wrt_global += self.current_state["s"]
+        self.current_state["s"], self.current_state["d"] = self.refrence_path_local.cartesian_to_frenet(self.current_state["x"], self.current_state["y"])
 
     def is_reroute(self, current_state):
         self.current_state = current_state
-
         s_current = self.current_state["s"]
-        
-        s_future_pred = s_current + future_s(self.current_state["speed"], self.current_state["long_acc"], PLANNING_DURATION+0.5) 
-        print(self.s_future - s_future_pred)
-        if self.s_future - s_future_pred < 0:
+        s_future_pred = s_current + future_s(self.current_state["speed"], self.current_state["long_acc"], PLANNING_DURATION) + self.s_last_wrt_global
+        print("     Remaining local global path: ", self.s_future - s_future_pred)
+        if self.s_future - s_future_pred < 50:
             self.re_route(self.current_state["s"], self.current_state["d"]) 
-            self.s_last_wrt_global += self.current_state["s"]
             return True
-        
-    def get_path_and_new_state(self):
-        path = self.refrence_path_local
-        self.current_state["s"],self.current_state["d"] = self.refrence_path_local.cartesian_to_frenet(self.current_state["x"], self.current_state["y"])
-        return path
-
         
     

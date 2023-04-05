@@ -34,3 +34,9 @@ def distance(waypoint1, waypoint2):
     y = waypoint1.transform.location.y - waypoint2.transform.location.y
 
     return math.sqrt(x * x + y * y)
+
+def dist_xy(x1,y1,x2,y2):
+    dx = x1 - x2
+    dy = y1 - y2
+
+    return math.sqrt(dx**2 + dy**2)

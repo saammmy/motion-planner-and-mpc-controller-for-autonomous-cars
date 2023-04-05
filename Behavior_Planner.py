@@ -4,6 +4,9 @@ from misc import get_speed
 import numpy as np
 from  utils import *
 from params import *
+from Mission_Planner import MissionPlanner
+
+
 
 def future_s(speed, acc, t):
     return speed*t + 0.5*max(min(acc,MAX_ACC),-5)*t**2
@@ -36,133 +39,139 @@ class Obstacle:
 
 
 class BehaviorPlanner:
-    def __init__(self,local_planner, Ego):
+    def __init__(self,world, Ego, start_point, end_point):
         self.current_behavior = "FOLLOW_LANE"
-        self.local_planner = local_planner
+        self.world = world
         self.Ego = Ego
         self.lookahead_time = 6
         self.react_to_collision = 8
         self.overtake_lookahead_time = 2.6
-        self.current_d = 0
         self.speed = 0
         self.was_tailgate = False
+        self.start_point = start_point
+        self.end_point = end_point
+        self.mission_planner = MissionPlanner(world, Ego, start_point, end_point)
+        self.end_x, self.end_y = self.mission_planner.refrence_path_global.frenet_to_cartesian(self.mission_planner.refrence_path_global.s[-1],0)
 
-    def assignLane(self, d, lane_width=3.5):
-
-        if d < 1.75 and d > -1.75:
+        self.goal_reached = False
+    
+    def is_reached_goal(self, curr_x, curr_y):
+        if dist_xy(curr_x, curr_y, self.end_x, self.end_y) < 10:
+            return True
+        return False
+    
+    def normalize_d(self,d, lane_width = LANE_WIDTH):
+        if d < lane_width/2 and d > -lane_width/2:
             return 0
-        elif d > 1.75 and d < 5.25:
+        elif d > lane_width/2 and d < lane_width*3/2:
+            return LANE_WIDTH
+        elif d > -lane_width*3/2 and d < -lane_width/2:
+            return -LANE_WIDTH
+        else:
+            # print("ERROR: Car is outside reference path range with d= ",d)
+            return None
+
+    def assignLane(self, d, lane_width=LANE_WIDTH):
+
+        if d < lane_width/2 and d > -lane_width/2:
+            return 0
+        elif d > lane_width/2 and d < lane_width*3/2:
             return -1
-        elif d > -5.25 and d < -1.75:
+        elif d > -lane_width*3/2 and d < -lane_width/2:
             return 1
         else:
             return None
         
-    def get_next_behavior(self,current_state,obstacles):
+    def get_next_behavior(self,current_state, local_path,obstacles):
+        self.speed = current_state["speed"]
+
+        self.goal_reached = self.is_reached_goal(current_state["x"], current_state["y"])
+
+        is_reroute = self.mission_planner.is_reroute(current_state)
+        if is_reroute:
+            print("New Local Global Path Recieved-----------------------------------------------")
+
         self.speed = current_state["target_speed"]
         target_s = None
         self.current_behavior = "FOLLOW LANE"
 
-        left_lane_vehicles= []
-        right_lane_vehicles = []
-        current_lane_vehicles = []
+        left_lane_obstacles= []
+        right_lane_obstacles = []
+        current_lane_obstacles = []
+        other_lane_obstacles = []
 
-        active_obstacles = []
-        
-        lane_width = 3.5
-        semi_lane_width = 1.75
         ego_lane = self.assignLane(current_state["d"])
-        
-        lookahead = min(max(50,future_s(current_state["speed"], current_state["long_acc"], self.lookahead_time)),200)
-        # print("     Lookahead: ", lookahead)
-
+        ego_norm_d = self.normalize_d(current_state["d"])
+        # print("Current d", current_state["d"])
+        lookahead = min(max(MIN_OBS_RAD,future_s(current_state["speed"], current_state["long_acc"], self.lookahead_time)),MAX_OBS_RAD)
         for obstacle in obstacles:
             if(obstacle.id == self.Ego.id):
                 continue
-            s, d = self.local_planner.cartesian_to_frenet(obstacle.get_location().x, obstacle.get_location().y)
-            delta_s = s - current_state["s"]
-            if 0< delta_s < lookahead:
-                lane = self.assignLane(d)
-                # print("     OBSTACLE DETECTED: ", obstacle.id)
-                active_obstacles.append(Obstacle(obstacle, lane, s, d, delta_s))
-        
-        # print("     No of Active Obstacles: ",len(active_obstacles))
+            # get the location of the obstacle
+            obstacle_location = obstacle.get_location()
 
-        
-        for obstacle in active_obstacles:
-            if obstacle.lane == ego_lane:
-                relative_vel = current_state["speed"] - obstacle.vel
-                # collision_time = time_to_collision(relative_vel, obstacle.delta_s)
-                overtake_lookahead = min(max(25, future_s(current_state["speed"], current_state["long_acc"], self.overtake_lookahead_time)), 100)
-                # print("     Overtake Lookahead: ", overtake_lookahead)
-                overtake_delta_s = obstacle.s - current_state["s"]
+            # calculate the vector from the ego vehicle to the obstacle
+            to_obstacle_vector = obstacle_location - current_state["location_vector"]
 
-                if overtake_delta_s<10:
-                    self.current_behavior = "EMERGENCY BRAKE"
-                elif 0 < overtake_delta_s < overtake_lookahead:
-                    # Entering Overtake and Tailgate Check
+            # calculate the distance between the ego vehicle and the obstacle
+            distance_to_obstacle = self.Ego.get_location().distance(obstacle_location)
+
+            if distance_to_obstacle < lookahead:
+                dot_product = current_state["forward_vector"].x * to_obstacle_vector.x + current_state["forward_vector"].y * to_obstacle_vector.y + current_state["forward_vector"].z * to_obstacle_vector.z
+                magnitude_a = math.sqrt(current_state["forward_vector"].x ** 2 + current_state["forward_vector"].y ** 2 + current_state["forward_vector"].z ** 2)
+                magnitude_b = math.sqrt(to_obstacle_vector.x ** 2 + to_obstacle_vector.y ** 2 + to_obstacle_vector.z ** 2)
+
+                # calculate angle in radians
+                cos_theta = dot_product / (magnitude_a * magnitude_b)
+                theta = math.acos(cos_theta)
+
+                # convert to degrees
+                angle = math.degrees(theta)
+
+                # print(f"angle_to_obstacle: y:{obstacle.get_location().y}, angle:{angle}")
+                # check if the obstacle is directly ahead of the ego vehicle
+                if angle < 90.0:
+                    obs_s, obs_d = local_path.cartesian_to_frenet(obstacle.get_location().x, obstacle.get_location().y)
+                    obs_d_norm = self.normalize_d(obs_d)
+                    delta_s = obs_s - current_state["s"]
+                    # print("obs d", obs_d, " for id: ", obstacle.id)
+                    if obs_d_norm == None:
+                        other_lane_obstacles.append(Obstacle(obstacle, None, obs_s, obs_d, delta_s))
+                    elif obs_d_norm == ego_norm_d:
+                        current_lane_obstacles.append(Obstacle(obstacle, 0, obs_s, obs_d, delta_s))
+                    elif obs_d_norm > ego_norm_d:
+                        right_lane_obstacles.append(Obstacle(obstacle, -1, obs_s, obs_d, delta_s))
+                    elif obs_d_norm < ego_norm_d:
+                        left_lane_obstacles.append(Obstacle(obstacle, 1, obs_s, obs_d, delta_s))
+                        
+            
+        current_lane_obstacles = sorted(current_lane_obstacles, key=lambda Obstacle: Obstacle.delta_s)
+        left_lane_obstacles = sorted(left_lane_obstacles, key=lambda Obstacle: Obstacle.delta_s)
+        right_lane_obstacles = sorted(right_lane_obstacles, key=lambda Obstacle: Obstacle.delta_s)
+
+        # print("CURR ",current_lane_obstacles)
+        # print("RIGHT ",right_lane_obstacles)
+        # print("LEFT ",left_lane_obstacles)
+        
+        overtake_lookahead = min(max(MIN_OVERTAKE_RANGE, future_s(current_state["speed"], current_state["long_acc"], self.overtake_lookahead_time)), MAX_OVERTAKE_RANGE)
+
+        if current_lane_obstacles:
+            overtake_delta_s = current_lane_obstacles[0].s - current_state["s"]
+            if overtake_delta_s<10:
+                self.current_behavior = "EMERGENCY_BRAKE"
+            elif 0 < overtake_delta_s < overtake_lookahead:
+                if not left_lane_obstacles or (left_lane_obstacles and left_lane_obstacles[0].s > current_lane_obstacles[0].s + OVERTAKE_THRESHOLD):
                     self.current_behavior = "OVERTAKE"
-                    self.current_d = -3.5
-                    if ego_lane != 1:
-                        for obs in active_obstacles:
-                            if obs.id != obstacle.id:
-                                if obs.lane == 1:
-                                    self.current_behavior = "TAILGATE"
-                                    self.tailgate_obs = obstacle
-                                    self.was_tailgate = True
-                                    self.speed = obstacle.vel
-                                    target_s = obstacle.s - 8.0
-                                    self.current_d = 0
-                                    
-                                    break
-
-        if len(active_obstacles) == 0 or self.current_behavior=="OVERTAKE":
+                    self.mission_planner.re_route(current_state["s"], ego_norm_d - LANE_WIDTH)
+                else:
+                    self.current_behavior = "TAILGATE"
+                    self.tailgate_obs = current_lane_obstacles[0]
+                    self.was_tailgate = True
+        
+        if not current_lane_obstacles or self.current_behavior=="OVERTAKE":
             self.was_tailgate = False
             self.speed = current_state["target_speed"]
 
         if self.was_tailgate == True:
-            self.speed = obstacle.vel
-
-        return self.current_behavior, target_s, self.current_d, self.speed
-            
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-        # elif closest_distance != float('inf') and current_state["speed"] < current_state["target_speed"] - 2:
-
-        #     if closest_distance < 10:
-        #         self.current_behavior = "SAFETY_STOP"
-        #         return self.current_behavior, None, None, None
-            
-        #     if get_speed(closest_vehicle) == 0:
-        #         self.current_behavior = "STOP"
-        #         return self.current_behavior, closest_vehicle_s - 8 , 0 , 0
-
-        #     else :
-        #         self.current_behavior = "FOLLOW_LEAD"
-        #         obs_vel = closest_vehicle.get_velocity()
-        #         obs_acc = closest_vehicle.get_acceleration()
-        #         obs_transform = closest_vehicle.get_transform()
-        #         transform_matrix = np.linalg.inv(obs_transform.get_matrix())
-        #         obs_vel = transform_matrix @ np.array([obs_vel.x, obs_vel.y, obs_vel.z, 0.0])
-        #         obs_acc = transform_matrix @ np.array([obs_acc.x, obs_acc.y, obs_acc.z, 0.0])
-
-        #         return self.current_behavior, closest_vehicle_s-8, round(obs_vel[0],2), round(obs_acc[0],2)
-        
-        # elif closest_distance != float('inf') and current_state["speed"] > current_state["target_speed"] - 2:
-        #     self.current_behavior = "lane_change"
-        #     return None, None
-
+            self.speed = self.tailgate_obs.vel
+        return self.current_behavior, self.speed

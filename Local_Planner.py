@@ -330,7 +330,9 @@ class LocalPlanner:
         return goal_sets
 
 
-    def run_step(self, refrence_path, current_state, target_s, target_d, behavior, target_speed):
+    def run_step(self, refrence_path, current_state, target_speed):
+        target_s = 0
+        target_d = 0
 
         self.refrence_path = refrence_path
         frenet_paths = []
@@ -391,6 +393,10 @@ class LocalPlanner:
             self.lon_traj_frenet = QuarticPolynomial(current_state["s"],current_state["long_vel"], current_state["long_acc"],final_speed,0,self.planning_time)
 
         fp.s = [self.lon_traj_frenet.calc_pos(t) for t in fp.t]
+        if(fp.s[-1] > self.refrence_path.s[-1]):
+            fp.s = np.clip(fp.s,0,self.refrence_path.s[-1])
+            final_speed = 0
+            print("Cilpping local path")
         fp.s_d = [self.lon_traj_frenet.calc_vel(t) for t in fp.t] 
         fp.s_dd = [self.lon_traj_frenet.calc_acc(t) for t in fp.t]
         fp.s_ddd = [self.lon_traj_frenet.calc_jerk(t) for t in fp.t]
