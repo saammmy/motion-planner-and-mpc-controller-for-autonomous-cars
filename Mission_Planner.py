@@ -39,6 +39,9 @@ class RefrencePath:
         self.yaw = []
         self.curv = []
         self.direction = []
+        self.waypoints = []
+        self.waypoints_x = []
+        self.waypoints_y = []
 
     def frenet_to_cartesian(self, s, d):
 
@@ -106,7 +109,6 @@ class MissionPlanner:
         self.dao = GlobalRoutePlannerDAO(world.get_map(), 3)   
         self.grp = GlobalRoutePlanner(self.dao)
         self.grp.setup()
-        self.planned_route = None
         self.planned_waypoints = None
         self.refrence_path_global = RefrencePath()
         self.refrence_path_local = RefrencePath()
@@ -120,7 +122,8 @@ class MissionPlanner:
         #Convert to cartesian based on global path
         start_x, start_y = self.refrence_path_local.frenet_to_cartesian(start_s, start_d)
         goal_x, goal_y = self.refrence_path_global.frenet_to_cartesian(self.s_future, 0)
-
+        # draw_trajectory([start_x], [start_y], self.world, 0.5, 1, 0, "point")
+        # draw_trajectory([goal_x], [goal_y], self.world, 0.5, 1, 0, "point")
         start_point = carla.Transform(carla.Location(x=start_x, y=start_y))
         end_point = carla.Transform(carla.Location(x=goal_x, y=goal_y))
 
@@ -134,6 +137,9 @@ class MissionPlanner:
         start_point = carla.Transform(carla.Location(x=start_x, y=start_y))
         end_point = carla.Transform(carla.Location(x=goal_x, y=goal_y))
         self.refrence_path_local = self.route(start_point, end_point)
+
+        draw_trajectory(self.refrence_path_global.x, self.refrence_path_global.y, self.world, 0 + 0.05, len(self.refrence_path_global.x)-1, 0, "line", carla.Color(0,0,0))
+        # draw_trajectory(self.refrence_path_local.x, self.refrence_path_local.y, self.world, 0 + 0.2, len(self.refrence_path_local.x)-1, 0, "line", carla.Color(0,128,0))
 
 
     def process_waypoints(self, waypoints):
@@ -154,6 +160,9 @@ class MissionPlanner:
             path.x.append(waypoint[0].transform.location.x)
             path.y.append(waypoint[0].transform.location.y)
             path.direction.append(waypoint[1])
+            path.waypoints.append(waypoint[0])
+            path.waypoints_x.append(waypoint[0].transform.location.x)
+            path.waypoints_y.append(waypoint[0].transform.location.y)
 
         path.refrencePath = Spline2D(path.x, path.y)
         path.x = []
@@ -172,7 +181,11 @@ class MissionPlanner:
 
     def route(self, start_point, end_point):
 
-        waypoints_ = self.grp.trace_route(start_point.location, end_point.location)
+        try:
+            waypoints_ = self.grp.trace_route(start_point.location, end_point.location)
+        except Exception as e:
+            return self.refrence_path_local
+
         self.planned_waypoints = self.process_waypoints(waypoints_)
         
         return self.setup_refrence_path()
@@ -183,15 +196,19 @@ class MissionPlanner:
 
         self.s_future = min(s_total + delta, self.refrence_path_global.s[-1])
         start_point, end_point = self.get_start_end_carla_point(start_s, start_d)
+        
         self.refrence_path_local = self.route(start_point, end_point)
-        self.s_last_wrt_global += self.current_state["s"]
+
+        # draw_trajectory(self.refrence_path_local.x, self.refrence_path_local.y, self.world, self.current_state["z"] + 0.5, len(self.refrence_path_local.x)-1, 0, "line", carla.Color(0,128,0))
+
+        self.s_last_wrt_global = self.refrence_path_global.cartesian_to_frenet(self.current_state["x"], self.current_state["y"])[0]  #self.current_state["s"]
         self.current_state["s"], self.current_state["d"] = self.refrence_path_local.cartesian_to_frenet(self.current_state["x"], self.current_state["y"])
 
     def is_reroute(self, current_state):
         self.current_state = current_state
         s_current = self.current_state["s"]
         s_future_pred = s_current + future_s(self.current_state["speed"], self.current_state["long_acc"], PLANNING_DURATION) + self.s_last_wrt_global
-        print("     Remaining local global path: ", self.s_future - s_future_pred)
+        # print("     Remaining local global path: ", self.s_future - s_future_pred)
         if self.s_future - s_future_pred < 50:
             self.re_route(self.current_state["s"], self.current_state["d"]) 
             return True

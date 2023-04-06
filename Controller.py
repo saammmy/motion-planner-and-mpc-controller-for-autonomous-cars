@@ -5,11 +5,13 @@ import glob
 import os
 import shutil
 import numpy as np
+import copy
 from scipy.optimize import minimize, differential_evolution
 from matplotlib import pyplot as plt
 from collections import deque
 from utils import *
 from params import *
+
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -167,7 +169,11 @@ class inputs:
         self.brake = brake
 
 class MPC:
-    def __init__(self, vehicle, world, global_x, global_y):
+    def __init__(self, vehicle, world, global_x, global_y, local_global_x, local_global_y):
+        # Store the vehicle and waypoint list
+        self.vehicle = vehicle
+        self.world = world
+
         self.w_cte = 10.0 #0.05
         self.w_eyaw = 60.0 #60.0
         self.w_dacc = 2500 #2500.0
@@ -181,19 +187,7 @@ class MPC:
         self.prediction_horizon = PREDICTION_HORIZON
         self.control_horizon = CONTROL_HORIZON
 
-        self.method = "graph_tracking"
-        if self.method =="throttle_offset":
-            self.thr_offset = 0.75
-        elif self.method == "pid_control":
-            self._k_p = 0.27
-            self._k_d = 0.01
-            self._k_i = 0.15
-        elif self.method == "pure_pid":
-            self._k_p = 1
-            self._k_d = 0.7
-            self._k_i = 0.7
-        elif self.method == "graph_tracking":
-            self.poly_dict = np.load("./data/poly3_dict.npy", allow_pickle='TRUE').item()
+        self.poly_dict = np.load("./data/poly3_dict.npy", allow_pickle='TRUE').item()
 
         self._dt = SAMPLE_TIME
         self._error_buffer = deque(maxlen=10)
@@ -207,6 +201,8 @@ class MPC:
         self.brake = 0
         self.final_speed = 0
         self.prev_pred_acc = 0
+        self.prev_pred_local_vel = 0
+        self.prev_pred_mpc_vel = 0
         
         # Control Inputs
         self.curr_input = inputs()
@@ -216,15 +212,23 @@ class MPC:
         self.lr = 1.445
         self.lf = 1.445
         self.coff = []
-        global_x = [ -x for x in global_x]
+        # global_x = [ -x for x in global_x]
         self.global_x = global_x
         self.global_y = global_y
+        
+        self.local_global_x = local_global_x
+        self.local_global_y = local_global_y
+        self.local_x = []
+        self.local_y = []
+        self.local_vel = []
+        self.mpc_x = []
+        self.mpc_y = []
+        self.mpc_vel = []
+        
         self.waypoints = []
         self.waypoints_wrt_vehicle = []
         
-        # Store the vehicle and waypoint list
-        self.vehicle = vehicle
-        self.world = world
+        
 
         self.mpc_plot = True
         self.exp_name = "Experiment_1"
@@ -234,118 +238,90 @@ class MPC:
         else:
             shutil.rmtree(self.log_graph_path + "/", ignore_errors=False)
         self.graph_creator = SummaryWriter(self.log_graph_path)
+
+        self.t_sync = 0
         self.start_time = round(time.time(),2)
         self.end_time = round(time.time(),2)
-
-    def draw_trajectory(self, x, y, world, time=PLOT_TIME):
-        for i in range(len(x)): #len(x)):
-            begin = carla.Location(x=x[i],y=y[i],z=self.vehicle_state.z+0.7)
-            world.debug.draw_point(begin,size=0.05,life_time=time)
 
     def plot_traj_carla(self, control_inputs):
         curr_state = self.vehicle_state
         realacc = curr_state.a
-        future_v = []
+
+        mpc_acc = control_inputs[0]
+        mpc_str = control_inputs[self.prediction_horizon]
+
+        self.local_x = []
+        self.local_y = []
+        self.local_vel = []
+        self.mpc_x = []
+        self.mpc_y = []
+        self.mpc_vel = []
+
+        if SYNCHRONOUS_MODE:
+            self.t_sync += TICK_TIME
+            t = self.t_sync
+        else:
+            t = round(time.time(),2) - self.start_time
+
         for itr in range(self.prediction_horizon):
             des_next_state = state(self.waypoints[0,itr],self.waypoints[1,itr],self.waypoints[2,itr],self.waypoints[3,itr])
-
             next_state = self.get_next_state(curr_state, control_inputs[itr], control_inputs[itr+self.prediction_horizon], des_next_state)
-            
-            curr_point = carla.Location(x=curr_state.x,y=curr_state.y,z=self.vehicle_state.z+0.4)
-            next_point = carla.Location(x=next_state.x,y=next_state.y,z=self.vehicle_state.z+0.4)
-            
-            self.world.debug.draw_arrow(curr_point, next_point, thickness=0.1, arrow_size=0.1, color=carla.Color(255, 0, 0), life_time=PLOT_TIME)
-            curr_state = next_state
-            if itr == 0:
-                x = -curr_state.x  # Update the x value
-                y = curr_state.y  # Generate a random y value
-                v = curr_state.v
 
-                desx = -des_next_state.x
-                desy = des_next_state.y
-                desv = des_next_state.v
-                                
-                t = round(time.time(),2) - self.start_time
-                str = control_inputs[itr+self.prediction_horizon]
-                acc = control_inputs[itr]
-            future_v.append(ms_to_mph(next_state.v))
-        self.graph_creator.add_scalar("Steering Angle (Degree)",str*180/np.pi, global_step=t)
-        self.graph_creator.add_scalars("Velocity (mph)",{"Velocity Predicted by MPC": ms_to_mph(v), "Velocity Proposed by Local Planner": ms_to_mph(desv), "Current Velocity in CARLA": ms_to_mph(self.vehicle_state.v), "Final Goal Speed": ms_to_mph(self.final_speed)},global_step=t)
+            self.local_x.append(des_next_state.x)
+            self.local_y.append(des_next_state.y)
+            self.local_vel.append(des_next_state.v)
+
+            self.mpc_x.append(next_state.x)
+            self.mpc_y.append(next_state.y)
+            self.mpc_vel.append(next_state.v)
+
+            curr_state = next_state
+
+        self.graph_creator.add_scalar("Steering Angle (Degree)",mpc_str*180/np.pi, global_step=t)
+        self.graph_creator.add_scalars("Velocity (mph)",{"Velocity Predicted by MPC": ms_to_mph(self.prev_pred_mpc_vel), "Velocity Proposed by Local Planner": ms_to_mph(self.prev_pred_local_vel), "Current Velocity in CARLA": ms_to_mph(self.vehicle_state.v), "Final Goal Speed": ms_to_mph(self.final_speed)},global_step=t)
         self.graph_creator.add_scalars("Acceleration",{"Acceleration Predicted by MPC":self.prev_pred_acc, "Carla Acceleration":realacc}, global_step=t)
         self.graph_creator.add_scalar("Steering Input to Carla",self.steering_angle, global_step=t)
         self.graph_creator.add_scalar("Throttle Input to Carla",self.throttle, global_step=t)
         self.graph_creator.add_scalar("Brake Input to Carla", self.brake, global_step=t)
     
-        self.prev_pred_acc = acc
+        self.prev_pred_acc = mpc_acc
+        self.prev_pred_local_vel = self.local_vel[0]
+        self.prev_pred_mpc_vel = self.mpc_vel[0]
+
+        draw_trajectory(self.local_x, self.local_y, self.world, self.vehicle_state.z + 0.7, len(self.local_x), PLOT_TIME, "point", carla.Color(255,0,255))
+        draw_trajectory(self.mpc_x, self.mpc_y, self.world, self.vehicle_state.z + 1.2, len(self.mpc_x)-1, PLOT_TIME, "arrow", carla.Color(128,0,0))
+        draw_trajectory(self.local_global_x, self.local_global_y, self.world, self.vehicle_state.z + 0.3, len(self.local_global_x)-1, PLOT_TIME, "line", carla.Color(0,128,0))
+        
+        # draw_trajectory([self.vehicle_state.x], [self.vehicle_state.y], self.world, self.vehicle_state.z + 0.5, 1, 0, "point", carla.Color(0,255,255))
 
         # print("MPC Future Velocity: ", future_v)
 
     def convert_input_to_carla(self, str_angle, target_acc):
         self.steering_angle = str_angle / self.str_bounds[1]
-        acc_maped = target_acc / self.acc_bounds[1]
 
-        if self.method == "throttle_offset":
-            if acc_maped >= 0:
-                self.throttle = min(acc_maped + self.thr_offset,1)
-                self.brake = 0
-            elif acc_maped < 0 and acc_maped > -self.thr_offset:
-                self.throttle = 0
-                self.brake = 0
-            else:
-                self.throttle = 0
-                self.brake = min(abs(acc_maped),1)
-
-        elif self.method == "pid_control":
-            print("Target Acc", target_acc)
-            print("Curr Acceleration", self.vehicle_state.a)
-            error = target_acc - min(self.vehicle_state.a,10)
-            self._error_buffer.append(error)
-
-            if len(self._error_buffer) >= 2:
-                _de = (self._error_buffer[-1] - self._error_buffer[-2]) / self._dt
-                _ie = sum(self._error_buffer) * self._dt
-            else:
-                _de = 0.0
-                _ie = 0.0
-
-            self.throttle = np.clip((self._k_p * error) + (self._k_d * _de) + (self._k_i * _ie), 0, 1.0)
+        delta_min = float('inf')
+        throttle = 0.0
+        final_vel = self.waypoints[3,-1]
+        target_vel = self.vehicle_state.v + target_acc * self.dt
         
-        elif self.method == "pure_pid":
-            error = 30 - self.vehicle_state.v
-            self._error_buffer.append(error)
-
-            if len(self._error_buffer) >= 2:
-                _de = (self._error_buffer[-1] - self._error_buffer[-2]) / self._dt
-                _ie = sum(self._error_buffer) * self._dt
+        if final_vel < 0.5:
+            self.brake += 0.1
+            self.brake = min(self.brake,1)
+            self.throttle = 0
+            self.steering_angle = 0
+        else:
+            for key in self.poly_dict:
+                poly = self.poly_dict[key]
+                acc = np.polyval(poly, target_vel)
+                delta = np.abs(acc - target_acc)
+                if delta<delta_min:
+                    delta_min = delta
+                    throttle = key
+            if throttle == 0.25:
+                self.throttle -= 0.05
             else:
-                _de = 0.0
-                _ie = 0.0
-
-            self.throttle = np.clip((self._k_p * error) + (self._k_d * _de) + (self._k_i * _ie), 0, 1.0)
-        
-        elif self.method == "graph_tracking":
-            delta_min = float('inf')
-            throttle = 0.0
-            target_vel = self.vehicle_state.v + target_acc * self.dt
-            
-            if self.waypoints[3,-1] < 0.5:
-                self.brake += 0.1
-                self.brake = min(self.brake,1)
-                self.throttle = 0
-                self.steering_angle = 0
-            else:
-                for key in self.poly_dict:
-                    poly = self.poly_dict[key]
-                    acc = np.polyval(poly, target_vel)
-                    delta = np.abs(acc - target_acc)
-                    if delta<delta_min:
-                        delta_min = delta
-                        throttle = key
-                if throttle == 0.25:
-                    self.throttle -= 0.05
-                else:
-                    self.throttle = min(self.throttle+0.1, throttle)
-                self.brake = 0
+                self.throttle = min(self.throttle+0.1, throttle)
+            self.brake = 0
 
     def update_vehicle_state(self, x=0, y=0, yaw=0, v=0, a=0, z=0, cte=0, eyaw=0):
         self.vehicle_state.x = x
@@ -356,18 +332,6 @@ class MPC:
         self.vehicle_state.z = z
         self.vehicle_state.cte = cte
         self.vehicle_state.eyaw = eyaw
-    
-    def update_waypoints(self, x, y, yaw, v, vehicle_state, final_speed):
-        self.update_vehicle_state(vehicle_state["x"], vehicle_state["y"], vehicle_state["yaw"], vehicle_state["speed"], vehicle_state["long_acc"], vehicle_state["z"])
-        self.bounds = (self.acc_bounds,)*self.prediction_horizon + (self.str_bounds,)*self.prediction_horizon
-
-        self.waypoints = np.zeros(shape=(4, np.shape(x)[0]-1))
-        self.waypoints[0,:] = x[1:]
-        self.waypoints[1,:] = y[1:]
-        self.waypoints[2,:] = convert_angle(yaw[1:])
-        self.waypoints[3,:] = v[1:]        
-        
-        self.final_speed = final_speed
     
     def global_to_vehicle(self, waypoints):
         n_waypoints = np.shape(waypoints)[1]
@@ -444,6 +408,21 @@ class MPC:
             curr_state = next_state
     
         return cost
+
+    def update_waypoints(self, x, y, yaw, v, vehicle_state, final_speed, local_global_x, local_global_y):
+        self.local_global_x = local_global_x
+        self.local_global_y = local_global_y
+        
+        self.update_vehicle_state(vehicle_state["x"], vehicle_state["y"], vehicle_state["yaw"], vehicle_state["speed"], vehicle_state["long_acc"], vehicle_state["z"])
+        self.bounds = (self.acc_bounds,)*self.prediction_horizon + (self.str_bounds,)*self.prediction_horizon
+
+        self.waypoints = np.zeros(shape=(4, np.shape(x)[0]-1))
+        self.waypoints[0,:] = x[1:]
+        self.waypoints[1,:] = y[1:]
+        self.waypoints[2,:] = convert_angle(yaw[1:])
+        self.waypoints[3,:] = v[1:]        
+        
+        self.final_speed = final_speed
     
     def run_step(self):
 
@@ -464,7 +443,6 @@ class MPC:
             self.convert_input_to_carla(control_inputs[i+self.prediction_horizon], control_inputs[i])
             if self.mpc_plot:
                 self.plot_traj_carla(control_inputs)
-                self.draw_trajectory(self.waypoints[0], self.waypoints[1], self.world)
                 plt.show()
             # print("Local Planner Future Velocities: ", self.waypoints[3,:])
             # print("Waypoints: ", self.waypoints)

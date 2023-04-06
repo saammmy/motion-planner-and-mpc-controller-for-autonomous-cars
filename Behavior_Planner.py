@@ -55,8 +55,9 @@ class BehaviorPlanner:
 
         self.goal_reached = False
     
-    def is_reached_goal(self, curr_x, curr_y):
-        if dist_xy(curr_x, curr_y, self.end_x, self.end_y) < 10:
+    def is_reached_goal(self, current_s_local):
+        curremt_s_global = current_s_local + self.mission_planner.s_last_wrt_global
+        if  self.mission_planner.refrence_path_global.s[-1] - curremt_s_global < GOAL_REACH_THRESHOLD:
             return True
         return False
     
@@ -85,11 +86,11 @@ class BehaviorPlanner:
     def get_next_behavior(self,current_state, local_path,obstacles):
         self.speed = current_state["speed"]
 
-        self.goal_reached = self.is_reached_goal(current_state["x"], current_state["y"])
+        self.goal_reached = self.is_reached_goal(current_state["s"])
 
         is_reroute = self.mission_planner.is_reroute(current_state)
         if is_reroute:
-            print("New Local Global Path Recieved-----------------------------------------------")
+            print("     New Local Global Path Recieved")
 
         self.speed = current_state["target_speed"]
         target_s = None
@@ -162,7 +163,19 @@ class BehaviorPlanner:
             elif 0 < overtake_delta_s < overtake_lookahead:
                 if not left_lane_obstacles or (left_lane_obstacles and left_lane_obstacles[0].s > current_lane_obstacles[0].s + OVERTAKE_THRESHOLD):
                     self.current_behavior = "OVERTAKE"
-                    self.mission_planner.re_route(current_state["s"], ego_norm_d - LANE_WIDTH)
+                    x, y = self.mission_planner.refrence_path_local.frenet_to_cartesian(current_state["s"], current_state["d"])
+                    argmin = get_closest_waypoint(self.mission_planner.refrence_path_local.waypoints_x, self.mission_planner.refrence_path_local.waypoints_y, x, y)
+                    waypoint_left = self.mission_planner.refrence_path_local.waypoints[argmin].get_left_lane()
+                    draw_trajectory([waypoint_left.transform.location.x], [waypoint_left.transform.location.y], self.world, 0.5, 1, 0, "point")
+                    print(waypoint_left.lane_type)
+                    if waypoint_left!=None and waypoint_left.lane_type == "Driving":
+                        s, d = self.mission_planner.refrence_path_local.cartesian_to_frenet(waypoint_left.transform.location.x, waypoint_left.transform.location.y)
+                        self.mission_planner.re_route(s, ego_norm_d + d)
+                        # self.mission_planner.re_route(current_state["s"], ego_norm_d - LANE_WIDTH)
+                    else:
+                        self.current_behavior = "TAILGATE"
+                        self.tailgate_obs = current_lane_obstacles[0]
+                        self.was_tailgate = True
                 else:
                     self.current_behavior = "TAILGATE"
                     self.tailgate_obs = current_lane_obstacles[0]

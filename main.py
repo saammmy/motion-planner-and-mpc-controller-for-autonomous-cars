@@ -137,24 +137,40 @@ if __name__ == "__main__":
     # Setup Behavior Planner
     local_planner = LocalPlanner(world)
     behavior_planner = BehaviorPlanner(world, Ego, start_point, end_point)
-    controller = MPC(Ego, world, [], [])
+    controller = MPC(Ego, world, behavior_planner.mission_planner.refrence_path_global.x, behavior_planner.mission_planner.refrence_path_global.y, behavior_planner.mission_planner.refrence_path_local.x, behavior_planner.mission_planner.refrence_path_local.y)
+
+    
+    junction_points = [obj for obj in behavior_planner.mission_planner.refrence_path_local.waypoints if obj.is_junction == True]
+    # print("X: ",junction_points[0].transform.location.x, "Y: ", junction_points[0].transform.location.y)
+    # draw_trajectory([junction_points[0].transform.location.x], [junction_points[0].transform.location.y], world, 0.5, 1, 0, "point")
 
     if SYNCHRONOUS_MODE:
         world.tick()
     
     spectator = world.get_spectator()
     spectator.set_transform(Ego.get_transform())
+    prev_x = START_X
+    prev_y = START_Y
+
 
     obstacles = world.get_actors().filter("*vehicle*")
     while  not behavior_planner.goal_reached:
         timestamp = world.get_snapshot()
         print("-------------------------------------------------")
-        print("CARLA TIME STAMP: ", round(timestamp.elapsed_seconds,4))
-        print("     Synchronous Mode: ", SYNCHRONOUS_MODE)
-        print("     Carla Delta Time: ",round(timestamp.delta_seconds,4))
+        # print("CARLA TIME STAMP: ", round(timestamp.elapsed_seconds,4))
+        # print("     Synchronous Mode: ", SYNCHRONOUS_MODE)
+        # print("     Carla Delta Time: ",round(timestamp.delta_seconds,4))
 
         s = time.time()
         current_state = get_current_states(Ego, behavior_planner.mission_planner.refrence_path_local)
+        curr_x = current_state["x"]
+        curr_y = current_state["y"]
+
+        draw_trajectory([prev_x, curr_x], [prev_y, curr_y], world, current_state["z"] + 0.5, 1, 0, "line", carla.Color(0,255,255))
+
+        prev_x = curr_x
+        prev_y = curr_y
+
         e1 = time.time()        
 
         behavior, target_vel = behavior_planner.get_next_behavior(current_state, behavior_planner.mission_planner.refrence_path_local, obstacles=obstacles )
@@ -171,19 +187,22 @@ if __name__ == "__main__":
 
         x, y, yaw, v, final_speed = local_planner.run_step(behavior_planner.mission_planner.refrence_path_local, current_state, target_vel) 
         e3 = time.time()
-        controller.update_waypoints(x, y, yaw, v, current_state, final_speed)
+        controller.update_waypoints(x, y, yaw, v, current_state, final_speed, behavior_planner.mission_planner.refrence_path_local.x, behavior_planner.mission_planner.refrence_path_local.y)
         controller.run_step()
         e4 = time.time()
+
+        
+
         if CONTROL_HORIZON == 1:
             pass
-            print("     Time to run one code loop: ", round(e4-s,4))
+            # print("     Time to run one code loop: ", round(e4-s,4))
         print("     Behaviour: ", behavior)
-        print("     Get State time: ", round(e1-s,3))
-        print("     Behavior Planner Time: ", round(e2-e1,3))
-        print("     Local Planner Time: ", round(e3-e2,3))
-        print("     Controller Time: ", round(e4-e3,3))
-        print("     Desired Speed: ", round(ms_to_mph(final_speed),2))
-        print("     Current speed of vehicle: ", round(ms_to_mph(current_state["speed"]),2))
+        # print("     Get State time: ", round(e1-s,3))
+        # print("     Behavior Planner Time: ", round(e2-e1,3))
+        # print("     Local Planner Time: ", round(e3-e2,3))
+        # print("     Controller Time: ", round(e4-e3,3))
+        # print("     Desired Speed: ", round(ms_to_mph(final_speed),2))
+        # print("     Current speed of vehicle: ", round(ms_to_mph(current_state["speed"]),2))
 
 
     control = carla.VehicleControl(0, 0, 1)
