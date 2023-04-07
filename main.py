@@ -154,6 +154,10 @@ if __name__ == "__main__":
 
 
     obstacles = world.get_actors().filter("*vehicle*")
+    traffic_lights = world.get_actors().filter("*traffic.traffic_light*")
+    traffic_lights = TrafficLights(traffic_lights)
+        
+
     while  not behavior_planner.goal_reached:
         timestamp = world.get_snapshot()
         print("-------------------------------------------------")
@@ -173,7 +177,7 @@ if __name__ == "__main__":
 
         e1 = time.time()        
 
-        behavior, target_vel = behavior_planner.get_next_behavior(current_state, behavior_planner.mission_planner.refrence_path_local, obstacles=obstacles )
+        behavior, target_vel = behavior_planner.get_next_behavior(current_state, behavior_planner.mission_planner.refrence_path_local, obstacles, traffic_lights)
         e2 = time.time()
         # behavior = "FOLLOW_LANE"
         # target_s = None
@@ -196,7 +200,7 @@ if __name__ == "__main__":
         if CONTROL_HORIZON == 1:
             pass
             # print("     Time to run one code loop: ", round(e4-s,4))
-        print("     Behaviour: ", behavior)
+        # print("     Behaviour: ", behavior)
         # print("     Get State time: ", round(e1-s,3))
         # print("     Behavior Planner Time: ", round(e2-e1,3))
         # print("     Local Planner Time: ", round(e3-e2,3))

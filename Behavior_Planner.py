@@ -5,6 +5,7 @@ import numpy as np
 from  utils import *
 from params import *
 from Mission_Planner import MissionPlanner
+import random
 
 
 
@@ -16,26 +17,6 @@ def time_to_collision(relative_speed, delta_s):
 
 def calculate_distance(current_state,vehicle):
     return sqrt((current_state['x'] - vehicle.get_location().x)**2 + (current_state['y'] - vehicle.get_location().y)**2)
-
-class Obstacle:
-    def __init__(self, obs, lane=None, s=None, d=None, delta_s=None):
-        
-        self.obstacle = obs
-        self.id = obs.id
-        self.lane = lane
-        self.s = s
-        self.d = d
-        self.delta_s = delta_s
-        self.vel = obs.get_velocity()
-        self.acc = obs.get_acceleration()
-        self.vel = sqrt(self.vel.x**2 + self.vel.y**2)
-        self.acc = sqrt(self.acc.x**2 + self.acc.y**2)
-        # transform = obs.get_transform()
-        # transform_matrix = np.linalg.inv(transform.get_matrix())
-        # self.vel = transform_matrix @ np.array([self.vel.x, self.vel.y, self.vel.z, 0.0])
-        # self.acc = transform_matrix @ np.array([self.acc.x, self.acc.y, self.acc.z, 0.0])
-        self.intent = None
-
 
 
 class BehaviorPlanner:
@@ -83,7 +64,7 @@ class BehaviorPlanner:
         else:
             return None
         
-    def get_next_behavior(self,current_state, local_path,obstacles):
+    def get_next_behavior(self,current_state, local_path, obstacles, traffic_lights):
         self.speed = current_state["speed"]
 
         self.goal_reached = self.is_reached_goal(current_state["s"])
@@ -144,7 +125,50 @@ class BehaviorPlanner:
                         right_lane_obstacles.append(Obstacle(obstacle, -1, obs_s, obs_d, delta_s))
                     elif obs_d_norm < ego_norm_d:
                         left_lane_obstacles.append(Obstacle(obstacle, 1, obs_s, obs_d, delta_s))
-                        
+        
+        closest_traffic_light_idx = get_closest_waypoint(traffic_lights.x_list, traffic_lights.y_list, current_state["x"], current_state["y"])
+        closest_traffic_light = traffic_lights.lights[closest_traffic_light_idx]
+        print(self.Ego.get_transform().rotation.yaw)
+        if self.Ego.get_location().distance(closest_traffic_light.get_location()) < 100:
+            group_traffic_light = closest_traffic_light.get_group_traffic_lights()
+            print("No of Traffic Lights: ",len(group_traffic_light))
+            for traffic_light in group_traffic_light:
+                # get the location of the obstacle
+                traffic_light_location = traffic_light.get_location()
+
+                # calculate the vector from the ego vehicle to the obstacle
+                to_traffic_light_vector = traffic_light_location - current_state["location_vector"]
+
+                # calculate the distance between the ego vehicle and the obstacle
+                distance_to_traffic_light = self.Ego.get_location().distance(traffic_light_location)
+
+                dot_product = current_state["forward_vector"].x * to_traffic_light_vector.x + current_state["forward_vector"].y * to_traffic_light_vector.y + current_state["forward_vector"].z * to_traffic_light_vector.z
+                magnitude_a = math.sqrt(current_state["forward_vector"].x ** 2 + current_state["forward_vector"].y ** 2 + current_state["forward_vector"].z ** 2)
+                magnitude_b = math.sqrt(to_traffic_light_vector.x ** 2 + to_traffic_light_vector.y ** 2 + to_traffic_light_vector.z ** 2)
+
+                # calculate angle in radians
+                cos_theta = dot_product / (magnitude_a * magnitude_b)
+                theta = math.acos(cos_theta)
+
+                # convert to degrees
+                angle = math.degrees(theta)
+                
+                rand = random.randint(1,5)
+                if rand == 1:
+                    color = carla.Color(0,0,0)
+                elif rand == 2:
+                    color = carla.Color(0,255,0)
+                elif rand == 3:
+                    color = carla.Color(0,0,255)
+                elif rand == 4:
+                    color = carla.Color(255,255,255)
+                elif rand == 5:
+                    color = carla.Color(255, 0, 255)
+                
+                print("Traffic Id: ",traffic_light.id, " Angle: ", angle, " Color: ", color, "Rotation: ", traffic_light.get_transform().rotation.yaw)
+
+                draw_trajectory([traffic_light.get_location().x, traffic_light.get_location().x+2], [traffic_light.get_location().y, traffic_light.get_location().y+2], self.world, 0.5, 1, 0, "line", color)
+        
             
         current_lane_obstacles = sorted(current_lane_obstacles, key=lambda Obstacle: Obstacle.delta_s)
         left_lane_obstacles = sorted(left_lane_obstacles, key=lambda Obstacle: Obstacle.delta_s)
@@ -166,7 +190,7 @@ class BehaviorPlanner:
                     x, y = self.mission_planner.refrence_path_local.frenet_to_cartesian(current_state["s"], current_state["d"])
                     argmin = get_closest_waypoint(self.mission_planner.refrence_path_local.waypoints_x, self.mission_planner.refrence_path_local.waypoints_y, x, y)
                     waypoint_left = self.mission_planner.refrence_path_local.waypoints[argmin].get_left_lane()
-                    draw_trajectory([waypoint_left.transform.location.x], [waypoint_left.transform.location.y], self.world, 0.5, 1, 0, "point")
+                    # draw_trajectory([waypoint_left.transform.location.x], [waypoint_left.transform.location.y], self.world, 0.5, 1, 0, "point")
                     print(waypoint_left.lane_type)
                     if waypoint_left!=None and waypoint_left.lane_type == "Driving":
                         s, d = self.mission_planner.refrence_path_local.cartesian_to_frenet(waypoint_left.transform.location.x, waypoint_left.transform.location.y)

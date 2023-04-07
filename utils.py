@@ -18,6 +18,35 @@ except IndexError:
 
 import carla
 
+class Obstacle:
+    def __init__(self, obs, lane=None, s=None, d=None, delta_s=None):
+        
+        self.obstacle = obs
+        self.id = obs.id
+        self.lane = lane
+        self.s = s
+        self.d = d
+        self.delta_s = delta_s
+        self.vel = obs.get_velocity()
+        self.acc = obs.get_acceleration()
+        self.vel = math.sqrt(self.vel.x**2 + self.vel.y**2)
+        self.acc = math.sqrt(self.acc.x**2 + self.acc.y**2)
+        # transform = obs.get_transform()
+        # transform_matrix = np.linalg.inv(transform.get_matrix())
+        # self.vel = transform_matrix @ np.array([self.vel.x, self.vel.y, self.vel.z, 0.0])
+        # self.acc = transform_matrix @ np.array([self.acc.x, self.acc.y, self.acc.z, 0.0])
+        self.intent = None
+
+class TrafficLights:
+    def __init__(self, traffic_lights):
+        self.lights = traffic_lights
+        self.x_list = []
+        self.y_list = []
+        
+        for traffic_light in traffic_lights:
+            self.x_list.append(traffic_light.get_location().x)
+            self.y_list.append(traffic_light.get_location().y)
+
 def ms_to_mph(speed):
         return speed * 2.24
     
@@ -73,4 +102,4 @@ def get_closest_waypoint(waypoints_x, waypoints_y, x, y):
     dx = np.array(waypoints_x)-x
     dy = np.array(waypoints_y)-y
     
-    return np.argmin(np.hypot(dx,dy))
+    return int(np.argmin(np.hypot(dx,dy)))
