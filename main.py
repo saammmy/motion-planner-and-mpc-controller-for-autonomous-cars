@@ -15,6 +15,7 @@ from utils import *
 from params import *
 import logging
 from Mission_Planner import MissionPlanner
+import spawn_npc 
 try:
     sys.path.append(glob.glob('../carla/dist/carla-*%d.%d-%s.egg' % (
         sys.version_info.major,
@@ -35,13 +36,13 @@ from agents.navigation.global_route_planner_dao import GlobalRoutePlannerDAO
 
 
 def get_current_states(Ego, refrence_path):
-    # ego_wpt = world.get_map().get_waypoint(ego_vehicle_loc)
     ego_vel = Ego.get_velocity()
     ego_speed = sqrt(ego_vel.x**2 + ego_vel.y**2)
     ego_acc = Ego.get_acceleration()
     ego_acc1 = sqrt(ego_acc.x**2 + ego_acc.y**2)
     ego_transform = Ego.get_transform()
     ego_vehicle_loc = ego_transform.location
+    # ego_wpt = world.get_map().get_waypoint(ego_vehicle_loc)
     ego_forward_vector = ego_transform.get_forward_vector()
     transform_matrix = np.linalg.inv(ego_transform.get_matrix())
     ego_vel = transform_matrix @ np.array([ego_vel.x, ego_vel.y, ego_vel.z, 0.0])
@@ -109,15 +110,16 @@ if __name__ == "__main__":
     SetVehicleLightState = carla.command.SetVehicleLightState
     FutureActor = carla.command.FutureActor
     if SPAWN_OBSTACLE:
-        obstacle1 = carla.Transform(carla.Location(x=OBS1_X, y=OBS1_Y, z=0.3), carla.Rotation(pitch=0.0, yaw=OBS1_YAW, roll=0.0))
-        obstacle2 = carla.Transform(carla.Location(x=OBS2_X, y=OBS2_Y, z=0.3), carla.Rotation(pitch=0.0, yaw=OBS2_YAW, roll=0.0))
-        obs = [obstacle1, obstacle2]
+        spawn_npc.main()
+        obs = []
+        for i in range(len(OBS_X)):
+            obs.append(carla.Transform(carla.Location(x=OBS_X[i], y=OBS_Y[i], z=0.3), carla.Rotation(pitch=0.0, yaw=OBS_YAW[i], roll=0.0)))
         light_state = vls.NONE
         if True:
             light_state = vls.Position | vls.LowBeam | vls.LowBeam
         for ob in obs:
             obstacles.append(SpawnActor(vehicle_bp, ob)
-            .then(SetAutopilot(FutureActor, True, trafficManager.get_port()))
+            .then(SetAutopilot(FutureActor, False, trafficManager.get_port()))
             .then(SetVehicleLightState(FutureActor, light_state)))
 
     vehicles_list = []
@@ -149,8 +151,8 @@ if __name__ == "__main__":
     
     spectator = world.get_spectator()
     spectator.set_transform(Ego.get_transform())
-    prev_x = START_X
-    prev_y = START_Y
+    prev_x = Ego.get_transform().location.x
+    prev_y = Ego.get_transform().location.y
 
 
     obstacles = world.get_actors().filter("*vehicle*")
@@ -200,7 +202,7 @@ if __name__ == "__main__":
         if CONTROL_HORIZON == 1:
             pass
             # print("     Time to run one code loop: ", round(e4-s,4))
-        # print("     Behaviour: ", behavior)
+        print("     Behaviour: ", behavior)
         # print("     Get State time: ", round(e1-s,3))
         # print("     Behavior Planner Time: ", round(e2-e1,3))
         # print("     Local Planner Time: ", round(e3-e2,3))

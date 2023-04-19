@@ -15,7 +15,6 @@ class RampGenerator:
         self.max_accel = max_accel
 
     def plan(self, curr_vel, target_vel, ds):
-
         req_accel = (target_vel**2 - curr_vel**2)/(2*ds[-1])
         if curr_vel < target_vel:
             if req_accel > self.max_accel:
@@ -24,7 +23,7 @@ class RampGenerator:
                 target_vel = math.sqrt(curr_vel**2 + 2*req_accel*ds[-1])
         else:
             if req_accel < self.min_accel:
-                print("Breaching minimum acceleation limits")
+                # print("Breaching minimum acceleation limits")
                 req_accel = self.min_accel
                 target_vel = math.sqrt(curr_vel**2 + 2*req_accel*ds[-1])
 

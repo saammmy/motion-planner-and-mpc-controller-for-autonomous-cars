@@ -167,7 +167,6 @@ class MissionPlanner:
         path.refrencePath = Spline2D(path.x, path.y)
         path.x = []
         path.y = []
-        path.direction = []
         path.s = np.arange(0, path.refrencePath.s[-1], path.ds)
 
         for i_s in path.s:

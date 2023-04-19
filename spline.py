@@ -178,7 +178,11 @@ class Spline2D:
         """
         dx = self.sx.calcd(s)
         dy = self.sy.calcd(s)
-        yaw = math.atan2(dy, dx)
+        try:
+            yaw = math.atan2(dy, dx)
+        except Exception as e:
+            print("YAW ERROR, EMPTY LIST")
+            yaw = 0 
         return yaw
 
 

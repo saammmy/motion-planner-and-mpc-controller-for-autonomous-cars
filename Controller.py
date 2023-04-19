@@ -305,7 +305,7 @@ class MPC:
         target_vel = self.vehicle_state.v + target_acc * self.dt
         
         if final_vel < 0.5:
-            self.brake += 0.1
+            self.brake += 0.2
             self.brake = min(self.brake,1)
             self.throttle = 0
             self.steering_angle = 0
@@ -318,7 +318,7 @@ class MPC:
                     delta_min = delta
                     throttle = key
             if throttle == 0.25:
-                self.throttle -= 0.05
+                self.throttle -= 0.1
             else:
                 self.throttle = min(self.throttle+0.1, throttle)
             self.brake = 0

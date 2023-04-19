@@ -155,7 +155,7 @@ class LocalPlanner:
         self.lon_traj_frenet = None
         self.traj_cartesian = None
         self.max_acceleration = 5 #m/s2
-        self.min_acceleration = -5
+        self.min_acceleration = -15
         self.target_velocity = None
         self.velocity_generator = RampGenerator(max_accel= self.max_acceleration, min_accel = self.min_acceleration)
         self.curvature_lookahed_time = 5 #secs

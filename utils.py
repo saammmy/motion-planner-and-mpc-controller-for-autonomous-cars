@@ -63,6 +63,14 @@ def convert_angle(angle):
     angle = np.asarray(angle)
     return np.where(angle<0, 2*np.pi+angle, angle)
 
+def wrap_angle_pi_to_pi(angle):
+    angle = angle + math.pi  # shift angle range to [0, 2*pi)
+    angle = angle % (2*math.pi)  # wrap angle in range [0, 2*pi)
+    if angle < 0:
+        angle = angle + 2*math.pi  # convert negative angle to positive equivalent
+    angle = angle - math.pi  # shift angle range back to [-pi, pi)
+    return np.rad2deg(angle)
+
 def normalize_angle(angle):
     return angle % (2 * np.pi)
 
@@ -103,3 +111,5 @@ def get_closest_waypoint(waypoints_x, waypoints_y, x, y):
     dy = np.array(waypoints_y)-y
     
     return int(np.argmin(np.hypot(dx,dy)))
+
+
