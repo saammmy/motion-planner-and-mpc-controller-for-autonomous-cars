@@ -40,8 +40,6 @@ class BehaviorPlanner:
         self.world = world
         self.Ego = Ego
         self.lookahead_time = 6
-        self.react_to_collision = 8
-        self.overtake_lookahead_time = 2.6
         self.speed = 0
         self.was_tailgate = False
         self.start_point = start_point
@@ -51,6 +49,8 @@ class BehaviorPlanner:
 
         self.goal_reached = False
         self.idle_time = 0
+        self.stop_idle_time = 0
+        self.stop_flag = False
         self.prev_time = time.time()
     
     def is_reached_goal(self, current_s_local):
@@ -81,12 +81,13 @@ class BehaviorPlanner:
         self.speed = current_state["speed"]
         ego_angle = self.Ego.get_transform().rotation.yaw
         waypoint, idx = self.get_waypoint_from_frenet(current_state["s"], current_state["d"])
+
         if idx+1 == len(self.mission_planner.refrence_path_local.waypoints):
             next_waypoint = waypoint
         else:
             next_waypoint = self.mission_planner.refrence_path_local.waypoints[idx+2] 
-        if next_waypoint.is_junction:
-            draw_trajectory([current_state["x"]], [current_state["y"]], self.world, current_state["z"] + 1.4, 1, 0, "point", carla.Color(255,0,255))
+        # if next_waypoint.is_junction:
+            # draw_trajectory([current_state["x"]], [current_state["y"]], self.world, current_state["z"] + 1.4, 1, 0, "point", carla.Color(255,0,255))
         direction = self.mission_planner.refrence_path_local.direction[idx]
 
         self.goal_reached = self.is_reached_goal(current_state["s"])
@@ -96,7 +97,6 @@ class BehaviorPlanner:
             print("     New Local Global Path Recieved")
 
         self.speed = current_state["target_speed"]
-        target_s = None
         self.current_behavior = "FOLLOW LANE"
 
         left_lane_obstacles= []
@@ -111,7 +111,7 @@ class BehaviorPlanner:
 
         ego_norm_d = self.normalize_d(current_state["d"])
         # print("Current d", current_state["d"])
-        lookahead = min(max(MIN_OBS_RAD,future_s(current_state["speed"], current_state["long_acc"], self.lookahead_time)),MAX_OBS_RAD)
+        lookahead = min(max(MIN_OBS_RAD,future_s(current_state["speed"], current_state["long_acc"], OBS_LOOKAHEAD_TIME)),MAX_OBS_RAD)
 
         # Collect waypoints and s when turn happens
         s_future_lookahead = min(current_state["s"] + lookahead, self.mission_planner.refrence_path_local.s[-1])
@@ -131,6 +131,7 @@ class BehaviorPlanner:
                 break
         
         incoming = "STRAIGHT"
+        s_incoming = None
         for i in range(idx, idx_future):
             if self.mission_planner.refrence_path_local.direction[i] == RoadOption.RIGHT:
                 incoming = "RIGHT_TURN"
@@ -214,13 +215,20 @@ class BehaviorPlanner:
         # print(len(left_lane_obstacles))
         # print(len(right_lane_obstacles))
         # print(len(current_lane_obstacles))
-        
-        
-        closest_traffic_light_idx = get_closest_waypoint(traffic_lights.x_list, traffic_lights.y_list, current_state["x"], current_state["y"])
-        closest_traffic_light = traffic_lights.lights[closest_traffic_light_idx]
+
+        valid_traffic_lights_idx = np.where(np.abs(traffic_lights.z_list - current_state["z"]) < TRAFFIC_LIGHT_HEIGHT_THRESHOLD)
+
+        closest_traffic_light = None
+        if valid_traffic_lights_idx[0].size:
+            closest_traffic_light_idx = get_closest_waypoint(traffic_lights.x_list[valid_traffic_lights_idx], traffic_lights.y_list[valid_traffic_lights_idx], current_state["x"], current_state["y"])
+            closest_traffic_light = traffic_lights.lights[closest_traffic_light_idx]
 
         my_traffic_light = None
-        if self.Ego.get_location().distance(closest_traffic_light.get_location()) < 50:
+        traffic_light_lookahead = min(max(TRAFFIC_LIGHT_LOOKAHEAD_MIN, future_s(current_state["speed"], current_state["long_acc"], TRAFFIC_LIGHT_LOOKAHEAD_TIME)), TRAFFIC_LIGHT_LOOKAHEAD_MAX)
+        print(traffic_light_lookahead)
+        if closest_traffic_light and self.Ego.get_location().distance(closest_traffic_light.get_location()) < traffic_light_lookahead:
+            draw_trajectory([closest_traffic_light.get_location().x, closest_traffic_light.get_location().x+2], [closest_traffic_light.get_location().y, closest_traffic_light.get_location().y+2], self.world, 0.5, 1, PLOT_TIME, "line")
+
             group_traffic_light = closest_traffic_light.get_group_traffic_lights()
             # print("     No of Incoming Lights: ",len(group_traffic_light))
             for traffic_light in group_traffic_light:
@@ -249,18 +257,38 @@ class BehaviorPlanner:
                         # print("     Red Traffic Light Encountered = Traffic Id: ",my_traffic_light.id)
                         self.current_behavior = "TRAFFIC_LIGHT_STOP"
                         if(self.Ego.is_at_traffic_light() and next_waypoint.is_junction ):
-                            draw_trajectory([current_state["x"]], [current_state["y"]], self.world, current_state["z"] + 0.7, 1, 0, "point", carla.Color(255,0,255))
-
                             self.speed = 0.0
                         else:
-                            self.speed = 3.0
+                            self.speed = 3.0 #max(3.0, self.speed - 2.0)
                         break
+
+        stop_sign_lookahead = min(max(STOP_LIGHT_LOOKAHEAD_MIN, future_s(current_state["speed"], current_state["long_acc"], STOP_LIGHT_LOOKAHEAD_TIME)),STOP_LIGHT_LOOKAHEAD_MAX)
+        stop_signs = waypoint.get_landmarks_of_type(stop_sign_lookahead, "206", True)
+        for stop_sign in stop_signs:
+            draw_trajectory([stop_sign.transform.location.x], [stop_sign.transform.location.y], self.world, current_state["z"] + 0.7, 1, PLOT_TIME, "point", carla.Color(255,0,255))
+        
+        if stop_signs:
+            stop_sign = stop_signs[0]
+            if stop_sign.road_id == waypoint.road_id:
+                if stop_sign.distance < 4:
+                    print("TIME STOPPED", self.stop_idle_time)
+                    self.stop_idle_time += time.time() - self.prev_time
+                    if self.stop_idle_time < STOP_TIME_THRESHOLD:
+                        self.speed = 0
+                        self.current_behavior = "STOP SIGN"
+                        self.prev_time = time.time()
+                        return self.current_behavior, self.speed
+                    elif self.stop_idle_time > STOP_TIME_THRESHOLD + 2:
+                        self.stop_idle_time = 0
+                else:
+                    self.current_behavior = "INCOMING_STOP_SIGN"
+                    self.speed = 3.0
             
         current_lane_obstacles = sorted(current_lane_obstacles, key=lambda Obstacle: Obstacle.delta_s)
         left_lane_obstacles = sorted(left_lane_obstacles, key=lambda Obstacle: Obstacle.delta_s)
         right_lane_obstacles = sorted(right_lane_obstacles, key=lambda Obstacle: Obstacle.delta_s)
         
-        overtake_lookahead = min(max(MIN_OVERTAKE_RANGE, future_s(current_state["speed"], current_state["long_acc"], self.overtake_lookahead_time)), MAX_OVERTAKE_RANGE)
+        overtake_lookahead = min(max(MIN_OVERTAKE_RANGE, future_s(current_state["speed"], current_state["long_acc"], OVERTAKE_LOOKAHEAD_TIME)), MAX_OVERTAKE_RANGE)
 
         if current_lane_obstacles:
             overtake_delta_s = current_lane_obstacles[0].s - current_state["s"]
@@ -268,8 +296,10 @@ class BehaviorPlanner:
                 self.current_behavior = "EMERGENCY_BRAKE"
             elif 0 < overtake_delta_s < overtake_lookahead and ego_norm_d == 0:
                 if not left_lane_obstacles or (left_lane_obstacles and left_lane_obstacles[0].s > current_lane_obstacles[0].s + OVERTAKE_THRESHOLD):
-                    waypoint_left=   waypoint.get_left_lane()
-                    if waypoint_left!=None and waypoint_left.lane_type == carla.LaneType.Driving and waypoint_left.lane_id * waypoint.lane_id > 0 and incoming == "RIGHT_TURN" and (s_incoming-current_state["s"])>50:
+                    waypoint_left= waypoint.get_left_lane()
+                    if waypoint_left:
+                        print(waypoint_left.lane_id," ", waypoint.lane_id)
+                    if waypoint_left and waypoint_left.lane_type == carla.LaneType.Driving and waypoint_left.lane_id * waypoint.lane_id > 0 and (incoming == "STRAIGHT" or (incoming == "RIGHT_TURN" and (s_incoming-current_state["s"])>50)):
                         self.current_behavior = "OVERTAKE"
                         s, d = self.mission_planner.refrence_path_local.cartesian_to_frenet(waypoint_left.transform.location.x, waypoint_left.transform.location.y)
                         self.mission_planner.re_route(max(s - S_REROUTE_THRESHOLD,0), ego_norm_d + d)
@@ -298,7 +328,7 @@ class BehaviorPlanner:
         else:
             check_idle = 1
 
-        if self.idle_time > 5 and check_idle:
+        if self.idle_time > IDLE_TIME_THRESHOLD and check_idle:
             waypoint_right =   self.get_waypoint_from_frenet(current_state["s"], current_state["d"])[0].get_right_lane()
             if not right_lane_obstacles or (right_lane_obstacles and right_lane_obstacles[0].s > current_lane_obstacles[0].s + OVERTAKE_THRESHOLD):
                 if waypoint_right!=None and waypoint_right.lane_type == carla.LaneType.Driving:
@@ -322,7 +352,7 @@ class BehaviorPlanner:
                 self.mission_planner.re_route(max(s,0), ego_norm_d)
 
 
-        if (not current_lane_obstacles or self.current_behavior == "IDLE_FOR_LONG_TIME" or self.current_behavior=="OVERTAKE") and (self.current_behavior!="TRAFFIC_LIGHT_STOP"):
+        if (not current_lane_obstacles or self.current_behavior == "IDLE_FOR_LONG_TIME" or self.current_behavior=="OVERTAKE") and self.current_behavior!="TRAFFIC_LIGHT_STOP" and self.current_behavior!="INCOMING_STOP_SIGN":
             self.was_tailgate = False
             self.speed = current_state["target_speed"]
 

@@ -40,12 +40,21 @@ class Obstacle:
 class TrafficLights:
     def __init__(self, traffic_lights):
         self.lights = traffic_lights
-        self.x_list = []
-        self.y_list = []
+        self.x_list = np.array([])
+        self.y_list = np.array([])
+        self.z_list = np.array([])
         
         for traffic_light in traffic_lights:
-            self.x_list.append(traffic_light.get_location().x)
-            self.y_list.append(traffic_light.get_location().y)
+            self.x_list = np.append(self.x_list, traffic_light.get_location().x)
+            self.y_list = np.append(self.y_list, traffic_light.get_location().y)
+            self.z_list = np.append(self.z_list, traffic_light.get_location().z)
+
+class StopSign:
+    def __init__(self, stop_sign):
+        self.sign = stop_sign
+        self.distance = stop_sign.distance()
+        self.flag = False
+        
 
 def ms_to_mph(speed):
         return speed * 2.24
