@@ -121,4 +121,9 @@ def get_closest_waypoint(waypoints_x, waypoints_y, x, y):
     
     return int(np.argmin(np.hypot(dx,dy)))
 
+def get_nearby(waypoints_x, waypoints_y, x, y, threshold):
+    dx = np.array(waypoints_x)-x
+    dy = np.array(waypoints_y)-y
+    
+    return (np.where(np.hypot(dx,dy)<threshold))
 

@@ -12,7 +12,7 @@ import glob
 import os
 import sys
 import time
-
+from params import SYNCHRONOUS_MODE
 try:
     sys.path.append(glob.glob('../carla/dist/carla-*%d.%d-%s.egg' % (
         sys.version_info.major,
@@ -249,7 +249,7 @@ def main():
         all_actors = world.get_actors(all_id)
 
         # wait for a tick to ensure client receives the last transform of the walkers we have just created
-        if not args.sync or not synchronous_master:
+        if not SYNCHRONOUS_MODE:
             world.wait_for_tick()
         else:
             world.tick()

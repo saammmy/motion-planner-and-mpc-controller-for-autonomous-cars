@@ -50,7 +50,7 @@ class BehaviorPlanner:
         self.goal_reached = False
         self.idle_time = 0
         self.stop_idle_time = 0
-        self.stop_flag = False
+        self.yield_idle_time = 0
         self.prev_time = time.time()
     
     def is_reached_goal(self, current_s_local):
@@ -78,9 +78,11 @@ class BehaviorPlanner:
             return None
         
     def get_next_behavior(self,current_state, local_path, obstacles, traffic_lights):
-        self.speed = current_state["speed"]
         ego_angle = self.Ego.get_transform().rotation.yaw
         waypoint, idx = self.get_waypoint_from_frenet(current_state["s"], current_state["d"])
+        speed_limit = waypoint.get_landmarks_of_type(200, "274", True)
+        if speed_limit:
+            current_state["target_speed"] = min(kmph_to_ms(speed_limit[0].value), current_state["target_speed"])
 
         if idx+1 == len(self.mission_planner.refrence_path_local.waypoints):
             next_waypoint = waypoint
@@ -215,24 +217,13 @@ class BehaviorPlanner:
         # print(len(left_lane_obstacles))
         # print(len(right_lane_obstacles))
         # print(len(current_lane_obstacles))
-
-        valid_traffic_lights_idx = np.where(np.abs(traffic_lights.z_list - current_state["z"]) < TRAFFIC_LIGHT_HEIGHT_THRESHOLD)
-
-        closest_traffic_light = None
-        if valid_traffic_lights_idx[0].size:
-            closest_traffic_light_idx = get_closest_waypoint(traffic_lights.x_list[valid_traffic_lights_idx], traffic_lights.y_list[valid_traffic_lights_idx], current_state["x"], current_state["y"])
-            closest_traffic_light = traffic_lights.lights[closest_traffic_light_idx]
-
         my_traffic_light = None
         traffic_light_lookahead = min(max(TRAFFIC_LIGHT_LOOKAHEAD_MIN, future_s(current_state["speed"], current_state["long_acc"], TRAFFIC_LIGHT_LOOKAHEAD_TIME)), TRAFFIC_LIGHT_LOOKAHEAD_MAX)
-        print(traffic_light_lookahead)
-        if closest_traffic_light and self.Ego.get_location().distance(closest_traffic_light.get_location()) < traffic_light_lookahead:
-            draw_trajectory([closest_traffic_light.get_location().x, closest_traffic_light.get_location().x+2], [closest_traffic_light.get_location().y, closest_traffic_light.get_location().y+2], self.world, 0.5, 1, PLOT_TIME, "line")
-
-            group_traffic_light = closest_traffic_light.get_group_traffic_lights()
-            # print("     No of Incoming Lights: ",len(group_traffic_light))
-            for traffic_light in group_traffic_light:
-                #Now check if traffic light is ahead of us or behind
+        valid_traffic_lights_idx = np.where(np.abs(traffic_lights.z_list - current_state["z"]) < TRAFFIC_LIGHT_HEIGHT_THRESHOLD)
+        if valid_traffic_lights_idx[0].size:
+            nearby_traffic_lights_idx = get_nearby(traffic_lights.x_list[valid_traffic_lights_idx], traffic_lights.y_list[valid_traffic_lights_idx], current_state["x"], current_state["y"], traffic_light_lookahead)
+            for idx in nearby_traffic_lights_idx[0]:  
+                traffic_light = traffic_lights.lights[int(idx)]
                 traffic_light_location = traffic_light.get_location()
                 to_traffic_light_vector = traffic_light_location - current_state["location_vector"]
                 dot_product = current_state["forward_vector"].x * to_traffic_light_vector.x + current_state["forward_vector"].y * to_traffic_light_vector.y + current_state["forward_vector"].z * to_traffic_light_vector.z
@@ -259,31 +250,49 @@ class BehaviorPlanner:
                         if(self.Ego.is_at_traffic_light() and next_waypoint.is_junction ):
                             self.speed = 0.0
                         else:
-                            self.speed = 3.0 #max(3.0, self.speed - 2.0)
+                            self.speed = 3.0
                         break
 
         stop_sign_lookahead = min(max(STOP_LIGHT_LOOKAHEAD_MIN, future_s(current_state["speed"], current_state["long_acc"], STOP_LIGHT_LOOKAHEAD_TIME)),STOP_LIGHT_LOOKAHEAD_MAX)
         stop_signs = waypoint.get_landmarks_of_type(stop_sign_lookahead, "206", True)
+        yield_signs = waypoint.get_landmarks_of_type(stop_sign_lookahead, "205", True)
         for stop_sign in stop_signs:
             draw_trajectory([stop_sign.transform.location.x], [stop_sign.transform.location.y], self.world, current_state["z"] + 0.7, 1, PLOT_TIME, "point", carla.Color(255,0,255))
         
         if stop_signs:
-            stop_sign = stop_signs[0]
-            if stop_sign.road_id == waypoint.road_id:
-                if stop_sign.distance < 4:
-                    print("TIME STOPPED", self.stop_idle_time)
-                    self.stop_idle_time += time.time() - self.prev_time
-                    if self.stop_idle_time < STOP_TIME_THRESHOLD:
-                        self.speed = 0
-                        self.current_behavior = "STOP SIGN"
-                        self.prev_time = time.time()
-                        return self.current_behavior, self.speed
-                    elif self.stop_idle_time > STOP_TIME_THRESHOLD + 2:
-                        self.stop_idle_time = 0
-                else:
-                    self.current_behavior = "INCOMING_STOP_SIGN"
-                    self.speed = 3.0
-            
+            for stop_sign in stop_signs:
+                if stop_sign.road_id == waypoint.road_id:
+                    if stop_sign.distance < 4:
+                        self.stop_idle_time += time.time() - self.prev_time
+                        if self.stop_idle_time < STOP_TIME_THRESHOLD:
+                            self.speed = 0
+                            self.current_behavior = "STOP_SIGN"
+                            self.prev_time = time.time()
+                            return self.current_behavior, self.speed
+                        elif self.stop_idle_time > STOP_TIME_THRESHOLD + 5:
+                            self.stop_idle_time = 0
+                    else:
+                        self.current_behavior = "INCOMING_STOP_SIGN"
+                        self.speed = 3.0
+                    break
+
+        if yield_signs:
+            for yield_sign in yield_signs:
+                if yield_sign.road_id == waypoint.road_id:
+                    if yield_sign.distance < 4:
+                        self.yield_idle_time += time.time() - self.prev_time
+                        if self.yield_idle_time < YIELD_TIME_THRESHOLD:
+                            self.speed = 0
+                            self.current_behavior = "YIELD_SIGN"
+                            self.prev_time = time.time()
+                            return self.current_behavior, self.speed
+                        elif self.yield_idle_time > YIELD_TIME_THRESHOLD + 5:
+                            self.yield_idle_time = 0
+                    else:
+                        self.current_behavior = "INCOMING_YIELD_SIGN"
+                        self.speed = 3.0
+                    break
+
         current_lane_obstacles = sorted(current_lane_obstacles, key=lambda Obstacle: Obstacle.delta_s)
         left_lane_obstacles = sorted(left_lane_obstacles, key=lambda Obstacle: Obstacle.delta_s)
         right_lane_obstacles = sorted(right_lane_obstacles, key=lambda Obstacle: Obstacle.delta_s)

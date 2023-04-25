@@ -111,6 +111,9 @@ if __name__ == "__main__":
     FutureActor = carla.command.FutureActor
     if SPAWN_OBSTACLE:
         spawn_npc.main()
+        if SYNCHRONOUS_MODE:
+            print("reached here")
+            world.tick()
         obs = []
         for i in range(len(OBS_X)):
             obs.append(carla.Transform(carla.Location(x=OBS_X[i], y=OBS_Y[i], z=0.3), carla.Rotation(pitch=0.0, yaw=OBS_YAW[i], roll=0.0)))
@@ -134,7 +137,6 @@ if __name__ == "__main__":
     # Setup parameters
     reached_goal = False
 
-    time.sleep(1)
 
     # Setup Behavior Planner
     local_planner = LocalPlanner(world)
